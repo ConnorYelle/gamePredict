@@ -1,0 +1,53 @@
+# Compiled binaries
+*.exe
+*.exe.a
+*.o
+*.a
+*.so
+*.dylib
+*.dll
+*.lib
+*.out
+
+# Debug files
+*.dSYM/
+*.su
+*.gch
+*.pch
+
+# IDE and Editor files
+.vscode/
+.vs/
+.idea/
+*.swp
+*.swo
+*~
+*.sublime-project
+*.sublime-workspace
+
+# Build directories
+build/
+bin/
+dist/
+CMakeFiles/
+cmake_install.cmake
+CMakeCache.txt
+Makefile
+
+# Dependencies
+vcpkg_installed/
+conan/
+
+# OS-specific files
+.DS_Store
+Thumbs.db
+*.log
+
+# Temporary files
+*.tmp
+*.bak
+*.backup
+
+# Local configuration
+.env
+local_config.ini
