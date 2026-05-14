@@ -48,6 +48,10 @@ Thumbs.db
 *.bak
 *.backup
 
+# Project-specific files
+games.txt
+
+
 # Local configuration
 .env
 local_config.ini
