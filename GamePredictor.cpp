@@ -49,9 +49,50 @@ void GamePredictor::loadConfig(const std::string& configPath) {
 
 std::string GamePredictor::normalizeTeamName(const std::string& name) {
     std::string normalized = name;
-    // Remove leading/trailing whitespace
+
+    // Remove whitespace
     normalized.erase(0, normalized.find_first_not_of(" \t"));
     normalized.erase(normalized.find_last_not_of(" \t") + 1);
+
+    // Team nickname -> full name mapping
+    static std::map<std::string, std::string> teamMap = {
+        {"Diamondbacks", "Arizona Diamondbacks"},
+        {"Braves", "Atlanta Braves"},
+        {"Orioles", "Baltimore Orioles"},
+        {"Red Sox", "Boston Red Sox"},
+        {"Cubs", "Chicago Cubs"},
+        {"White Sox", "Chicago White Sox"},
+        {"Reds", "Cincinnati Reds"},
+        {"Guardians", "Cleveland Guardians"},
+        {"Rockies", "Colorado Rockies"},
+        {"Tigers", "Detroit Tigers"},
+        {"Astros", "Houston Astros"},
+        {"Royals", "Kansas City Royals"},
+        {"Angels", "Los Angeles Angels"},
+        {"Dodgers", "Los Angeles Dodgers"},
+        {"Marlins", "Miami Marlins"},
+        {"Brewers", "Milwaukee Brewers"},
+        {"Twins", "Minnesota Twins"},
+        {"Mets", "New York Mets"},
+        {"Yankees", "New York Yankees"},
+        {"Athletics", "Athletics"},
+        {"Phillies", "Philadelphia Phillies"},
+        {"Pirates", "Pittsburgh Pirates"},
+        {"Padres", "San Diego Padres"},
+        {"Giants", "San Francisco Giants"},
+        {"Mariners", "Seattle Mariners"},
+        {"Cardinals", "St. Louis Cardinals"},
+        {"Rays", "Tampa Bay Rays"},
+        {"Rangers", "Texas Rangers"},
+        {"Blue Jays", "Toronto Blue Jays"},
+        {"Nationals", "Washington Nationals"}
+    };
+
+    auto it = teamMap.find(normalized);
+    if (it != teamMap.end()) {
+        return it->second;
+    }
+
     return normalized;
 }
 
@@ -151,8 +192,8 @@ std::vector<Game> GamePredictor::loadGames(const std::string& gamesPath) {
         size_t pipePos = line.find('|');
         if (pipePos == std::string::npos) continue;
         
-        std::string homeTeam = line.substr(0, pipePos);
-        std::string awayTeam = line.substr(pipePos + 1);
+        std::string awayTeam = line.substr(0, pipePos);
+        std::string homeTeam = line.substr(pipePos + 1);
         
         // Remove leading/trailing whitespace
         homeTeam.erase(0, homeTeam.find_first_not_of(" \t"));
@@ -167,16 +208,70 @@ std::vector<Game> GamePredictor::loadGames(const std::string& gamesPath) {
 }
 
 void GamePredictor::predictAllGames(const std::vector<Game>& games) {
+
+    std::cout << "\n";
+    std::cout << "============================================================\n";
+    std::cout << "                 MLB GAME PREDICTIONS\n";
+    std::cout << "============================================================\n\n";
+
     for (const auto& game : games) {
+
         Team* home = getTeam(game.homeTeam);
         Team* away = getTeam(game.awayTeam);
-        
+
         if (home && away) {
-            double winProb = predictWinProbability(*home, *away);
-            std::cout << home->name << " vs " << away->name << " - " 
-                      << home->name << " win probability: " << (winProb * 100) << "%" << std::endl;
+
+            double homeWinProb = predictWinProbability(*home, *away);
+            double awayWinProb = 1.0 - homeWinProb;
+
+            Team* favorite;
+            double favoriteProb;
+
+            if (homeWinProb >= awayWinProb) {
+                favorite = home;
+                favoriteProb = homeWinProb;
+            } else {
+                favorite = away;
+                favoriteProb = awayWinProb;
+            }
+
+            std::cout << away->name
+                      << " @ "
+                      << home->name
+                      << "\n";
+
+            std::cout << "------------------------------------------------------------\n";
+
+            std::cout << std::left << std::setw(25)
+                      << away->name
+                      << std::right << std::setw(8)
+                      << std::fixed << std::setprecision(1)
+                      << (awayWinProb * 100) << "%\n";
+
+            std::cout << std::left << std::setw(25)
+                      << home->name
+                      << std::right << std::setw(8)
+                      << std::fixed << std::setprecision(1)
+                      << (homeWinProb * 100) << "%\n";
+
+            std::cout << "\n";
+
+            std::cout << "Favorite: "
+                      << favorite->name
+                      << " ("
+                      << std::fixed << std::setprecision(1)
+                      << (favoriteProb * 100)
+                      << "%)\n";
+
+            std::cout << "\n============================================================\n\n";
+
         } else {
-            std::cout << "Could not find teams: " << game.homeTeam << " vs " << game.awayTeam << std::endl;
+
+            std::cout << "[ERROR] Could not find teams: "
+                      << game.homeTeam
+                      << " vs "
+                      << game.awayTeam
+                      << "\n";
         }
     }
 }
