@@ -1,0 +1,10 @@
+{
+  "weights": {
+    "runsPerGameWeight": 0.4,
+    "onBasePercentageWeight": 50,
+    "sluggingPercentageWeight": 30,
+    "offenseWeight": 0.6,
+    "defenseWeight": 0.4,
+    "homeFieldAdvantage": 1.05
+  }
+}
