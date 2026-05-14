@@ -5,6 +5,9 @@
 int main() {
     GamePredictor predictor;
     
+    // Load configuration weights
+    predictor.loadConfig("config.json");
+    
     // Load all team statistics
     predictor.loadAllStats("rawData/05-13-26");
     
