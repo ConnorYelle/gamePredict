@@ -1,11 +1,15 @@
-Rockies | Pirates
-Nationals | Reds
-Tigers | Mets
-Padres | Brewers
-Marlins | Twins
-Mariners | Astros
-Cardinals | Athletics
-Phillies | Red Sox
-Cubs | Braves
-Royals | White Sox
-Giants | Dodgers
+Braves | Marlins
+Guardians | Tigers
+Reds | Phillies
+Orioles | Rays
+Mets | Nationals
+Blue Jays | Yankees
+Brewers | Cubs
+Red Sox | Royals
+Astros | Twins
+Pirates | Cardinals
+Rangers | Rockies
+Athletics | Angels
+Giants | D'backs
+Dodgers | Padres
+White Sox | Mariners

@@ -92,7 +92,7 @@ def save_games(games):
             for game in games:
                 f.write(game + '\n')
         
-        print(f"\n✓ Loaded {len(games)} games into games.txt")
+        print(f"\nLoaded {len(games)} games into games.txt")
         if games:
             print("\nGames:")
             for game in games:

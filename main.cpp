@@ -5,13 +5,13 @@
 int main() {
     GamePredictor predictor;
     
-    // Load configuration weights
+    // Load prediction weights from configuration file
     predictor.loadConfig("config.json");
     
-    // Load all team statistics
+    // Load all team statistics from the data directory
     predictor.loadAllStats("rawData/05-13-26");
     
-    // Load and predict all games from games.txt
+    // Load today's games from the schedule file
     auto games = predictor.loadGames("games.txt");
     if (!games.empty()) {
         std::cout << "=== Game Predictions ===" << std::endl;

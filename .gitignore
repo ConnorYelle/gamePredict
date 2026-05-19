@@ -28,6 +28,27 @@
 # Build directories
 build/
 bin/
+
+# Generated files and statistics
+main.exe
+predictions.txt
+prediction_report_*.txt
+stats_config.json
+games.txt
+team_*_stats.csv
+sample_matchup.json
+rawData/
+
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+
+# System files
+.DS_Store
+Thumbs.db
+*.log
 dist/
 CMakeFiles/
 cmake_install.cmake
