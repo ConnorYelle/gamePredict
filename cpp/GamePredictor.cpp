@@ -85,7 +85,8 @@ std::string GamePredictor::normalizeTeamName(const std::string& name) {
         {"Rays", "Tampa Bay Rays"},
         {"Rangers", "Texas Rangers"},
         {"Blue Jays", "Toronto Blue Jays"},
-        {"Nationals", "Washington Nationals"}
+        {"Nationals", "Washington Nationals"},
+        {"D'backs", "Arizona Diamondbacks"}
     };
 
     auto it = teamMap.find(normalized);
@@ -99,44 +100,48 @@ std::string GamePredictor::normalizeTeamName(const std::string& name) {
 void GamePredictor::loadAllStats(const std::string& baseDataPath) {
     // Load Batting Stats
     auto battingData = CSVReader::readCSV(baseDataPath + "/TeamStandardBatting.txt");
-    for (size_t i = 1; i < battingData.size() - 2; i++) { // Skip header and league average rows
-        auto& row = battingData[i];
-        if (row.size() < 20) continue;
-        
-        std::string teamName = normalizeTeamName(row[0]);
-        Team& team = teams[teamName];
-        team.name = teamName;
-        
-        // Parse batting stats: R/G, BA, OBP, SLG, HR
-        try {
-            team.runsPerGame = std::stod(row[3]);      // R/G
-            team.battingAvg = std::stod(row[17]);      // BA
-            team.onBasePercentage = std::stod(row[18]); // OBP
-            team.sluggingPercentage = std::stod(row[19]); // SLG
-            team.homeRuns = std::stoi(row[11]);        // HR
-        } catch (...) {
-            // Skip on parse error
+    if (battingData.size() > 2) {
+        for (size_t i = 1; i + 2 < battingData.size(); i++) { // Skip header and league average rows
+            auto& row = battingData[i];
+            if (row.size() < 20) continue;
+            
+            std::string teamName = normalizeTeamName(row[0]);
+            Team& team = teams[teamName];
+            team.name = teamName;
+            
+            // Parse batting stats: R/G, BA, OBP, SLG, HR
+            try {
+                team.runsPerGame = std::stod(row[3]);      // R/G
+                team.battingAvg = std::stod(row[17]);      // BA
+                team.onBasePercentage = std::stod(row[18]); // OBP
+                team.sluggingPercentage = std::stod(row[19]); // SLG
+                team.homeRuns = std::stoi(row[11]);        // HR
+            } catch (...) {
+                // Skip on parse error
+            }
         }
     }
     
     // Load Fielding Stats
     auto fieldingData = CSVReader::readCSV(baseDataPath + "/TeamFielding.txt");
-    for (size_t i = 1; i < fieldingData.size() - 2; i++) {
-        auto& row = fieldingData[i];
-        if (row.size() < 14) continue;
-        
-        std::string teamName = normalizeTeamName(row[0]);
-        if (teams.find(teamName) == teams.end()) {
-            teams[teamName].name = teamName;
-        }
-        Team& team = teams[teamName];
-        
-        try {
-            team.runsAllowedPerGame = std::stod(row[2]); // RA/G
-            team.fieldingPercentage = std::stod(row[13]); // Fld%
-            team.errors = std::stoi(row[11]);             // E
-        } catch (...) {
-            // Skip on parse error
+    if (fieldingData.size() > 2) {
+        for (size_t i = 1; i + 2 < fieldingData.size(); i++) {
+            auto& row = fieldingData[i];
+            if (row.size() < 14) continue;
+            
+            std::string teamName = normalizeTeamName(row[0]);
+            if (teams.find(teamName) == teams.end()) {
+                teams[teamName].name = teamName;
+            }
+            Team& team = teams[teamName];
+            
+            try {
+                team.runsAllowedPerGame = std::stod(row[2]); // RA/G
+                team.fieldingPercentage = std::stod(row[13]); // Fld%
+                team.errors = std::stoi(row[11]);             // E
+            } catch (...) {
+                // Skip on parse error
+            }
         }
     }
 }
@@ -192,25 +197,15 @@ std::vector<Game> GamePredictor::loadGames(const std::string& gamesPath) {
         size_t pipePos = line.find('|');
         if (pipePos == std::string::npos) continue;
         
-        std::string awayTeam = line.substr(0, pipePos);
-        std::string homeTeam = line.substr(pipePos + 1);
-        
-        // Remove leading/trailing whitespace
-        homeTeam.erase(0, homeTeam.find_first_not_of(" \t"));
-        homeTeam.erase(homeTeam.find_last_not_of(" \t") + 1);
-        awayTeam.erase(0, awayTeam.find_first_not_of(" \t"));
-        awayTeam.erase(awayTeam.find_last_not_of(" \t") + 1);
-        
+        std::string homeTeam = line.substr(0, pipePos);
+        std::string awayTeam = line.substr(pipePos + 1);
         games.push_back({homeTeam, awayTeam});
     }
-    
+
     return games;
 }
 
 void GamePredictor::predictAllGames(const std::vector<Game>& games) {
-
-    std::cout << "\n";
-    std::cout << "============================================================\n";
     std::cout << "                 MLB GAME PREDICTIONS\n";
     std::cout << "============================================================\n\n";
 

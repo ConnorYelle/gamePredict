@@ -7,6 +7,7 @@ Only fetches games for today's date.
 import urllib.request
 import re
 from datetime import datetime
+from pathlib import Path
 
 def fetch_games():
     """Fetch today's games from baseball-reference.com"""
@@ -86,13 +87,16 @@ def fetch_games():
         return []
 
 def save_games(games):
-    """Save games to games.txt"""
+    """Save games to outputs/games.txt"""
     try:
-        with open('games.txt', 'w') as f:
+        out_dir = Path('outputs')
+        out_dir.mkdir(parents=True, exist_ok=True)
+        games_path = out_dir / 'games.txt'
+        with games_path.open('w', encoding='utf-8') as f:
             for game in games:
                 f.write(game + '\n')
         
-        print(f"\nLoaded {len(games)} games into games.txt")
+        print(f"\nLoaded {len(games)} games into {games_path}")
         if games:
             print("\nGames:")
             for game in games:

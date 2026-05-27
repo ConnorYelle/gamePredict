@@ -186,3 +186,14 @@ These improvements would make the project stronger:
 
 MIT License
 
+## Model validation (latest)
+Generated: 2026-05-27 13:51 UTC
+
+- Predictions parsed: 15
+- Actual outcomes parsed: 15
+- Matched games: 15
+- Unmatched games: 0
+- Pick accuracy: 86.67%
+- Average probability assigned to winners: 51.37%
+- Brier score: 0.2369
+- Stats directory used: data/rawData\05-13-26

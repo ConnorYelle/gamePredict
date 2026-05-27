@@ -72,3 +72,17 @@ Thumbs.db
 # Local configuration
 .env
 local_config.ini
+
+# Recommended additions
+# Ignore generated outputs (predictions, reports, social posts)
+outputs/
+
+# Python virtual environments
+.venv/
+venv/
+env/
+
+# Test and cache dirs
+.pytest_cache/
+.mypy_cache/
+.ipynb_checkpoints/
