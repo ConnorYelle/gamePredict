@@ -1,0 +1,8 @@
+update validation script to compare current model to actual mlb game results. maybe use
+2025 may-oct?
+
+add validation script to the pipeline
+
+add tests to each part of the pipeline, to ensure everything is running smoothly
+
+setup ci/cd with github pages and the html file i generate.

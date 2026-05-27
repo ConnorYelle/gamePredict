@@ -151,40 +151,11 @@ Update `config.json` if you want to tune the prediction weights:
   }
 }
 ```
-
-## Social Media Automation Goal
-
-The long-term objective is to convert the prediction output into social content automatically.
-
-That includes:
-- generating short Twitter posts with game predictions and probability summaries
-- generating Instagram captions and post text for visual recap slides
-- including hashtags, team emojis, and brief insights
-- publishing posts automatically through API integrations
-
-This repo currently generates the prediction data and the next step is to add a content generation layer that builds formatted posts from the prediction results.
-
-## Improvement Opportunities
-
-These improvements would make the project stronger:
-
-- Add post generation for Twitter and Instagram from prediction results
-- Include player injury and lineup data in the prediction model
-- Add weather effects for each ballpark
-- Store historical outputs and compare predictions to actual results
-- Add a dashboard or REST API for easier access
-- Improve schedule scraping reliability with more robust HTML parsing or API usage
-- Add unit tests for the C++ prediction logic and CSV parsing
-
 ## Notes
 
 - The current project expects stats to be loaded from `rawData/<date>/`.
 - `games.txt` must use the format `Home Team | Away Team`.
 - The pipeline is intended for batch use and should be run daily for new predictions.
-
-## License
-
-MIT License
 
 ## Model validation (latest)
 Generated: 2026-05-27 13:51 UTC
