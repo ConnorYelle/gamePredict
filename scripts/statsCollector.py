@@ -11,6 +11,7 @@ import json
 import re
 import csv
 from datetime import datetime, timedelta
+from pathlib import Path
 from typing import Dict, List, Tuple, Optional
 import time
 
@@ -401,31 +402,47 @@ def main():
     collector = BaseballStatsCollector()
     year = 2026
     
-    print("=" * 60)
-    print("MLB ADVANCED STATISTICS COLLECTOR")
-    print("=" * 60)
-    print()
-    
-    # Fetch all statistics
-    print("📊 Collecting batting statistics...")
+    print("\nCollecting batting statistics...")
     batting_stats = collector.get_team_batting_stats(year)
     
-    print("📊 Collecting pitching statistics...")
+    print("Collecting pitching statistics...")
     pitching_stats = collector.get_team_pitching_stats(year)
     
-    print("📊 Collecting fielding statistics...")
+    print("Collecting fielding statistics...")
     fielding_stats = collector.get_team_fielding_stats(year)
+
+    # If scraping failed (no stats), try to fall back to latest data/rawData directory
+    if not batting_stats or not pitching_stats or not fielding_stats:
+        print("No live stats fetched - attempting fallback to local data/rawData/...\n")
+        import glob
+        import shutil
+
+        raw_root = Path('data') / 'rawData'
+        if raw_root.exists():
+            # Find the most recent dated folder
+            candidates = [p for p in raw_root.iterdir() if p.is_dir()]
+            if candidates:
+                latest = max(candidates, key=lambda p: p.name)
+                print(f"Using existing stats from {latest}")
+                for fn in ['team_batting_stats.csv', 'team_pitching_stats.csv', 'team_fielding_stats.csv']:
+                    src = latest / fn
+                    if src.exists():
+                        dst = Path(fn)
+                        try:
+                            shutil.copy(src, dst)
+                        except Exception as e:
+                            print(f"Could not copy {src}: {e}")
+            else:
+                print('No dated folders found under data/rawData')
+        else:
+            print('data/rawData directory not present')
     
-    # Save to CSV
-    print()
-    print("💾 Saving statistics...")
+    print("\nSaving statistics...")
     collector.save_stats_to_csv(batting_stats, 'team_batting_stats.csv', 'batting')
     collector.save_stats_to_csv(pitching_stats, 'team_pitching_stats.csv', 'pitching')
     collector.save_stats_to_csv(fielding_stats, 'team_fielding_stats.csv', 'fielding')
     
-    # Example: Create comparison for a hypothetical matchup
-    print()
-    print("📋 Creating sample team comparison...")
+    print("Creating sample team comparison...")
     if batting_stats and pitching_stats and fielding_stats:
         teams = list(batting_stats.keys())[:2]
         if len(teams) == 2:
@@ -435,21 +452,12 @@ def main():
             )
             collector.save_comparison_to_json(comparison, 'sample_matchup.json')
     
-    print()
-    print("=" * 60)
-    print("✓ Statistics collection complete!")
-    print("=" * 60)
-    print()
+    print("\nStatistics collection complete!")
     print("Generated files:")
     print("  - team_batting_stats.csv")
     print("  - team_pitching_stats.csv")
     print("  - team_fielding_stats.csv")
     print("  - sample_matchup.json")
-    print()
-    print("Advanced metrics included:")
-    print("  Batting: OPS+, ISO (Isolated Power), BABIP")
-    print("  Pitching: K/BB ratio, FIP, LOB%")
-    print("  Fielding: Error rates, double play efficiency")
 
 
 if __name__ == "__main__":

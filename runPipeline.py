@@ -8,7 +8,8 @@ import subprocess
 import os
 import sys
 import json
-from datetime import datetime
+import time
+from datetime import datetime, timedelta
 from pathlib import Path
 
 from scripts.social_post_generator import SocialPostManager
@@ -25,10 +26,28 @@ class PredictionPipeline:
         self.predictions_file = self.outputs_dir / "predictions.txt"
         self.reports_dir = self.outputs_dir / "reports"
         self.social_dir = self.outputs_dir / "social_posts"
+        self.pipeline_start = None
+        self.step_times = {}
 
     def log(self, message: str, level: str = "INFO"):
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         print(f"[{timestamp}] [{level}] {message}")
+
+    def log_step_start(self, step_num: int, step_name: str):
+        """Log the start of a step with timestamp"""
+        start_time = time.time()
+        self.step_times[step_num] = {"name": step_name, "start": start_time, "end": None}
+        print(f"\n[{datetime.now().strftime('%H:%M:%S')}] STEP {step_num}: {step_name}")
+        print("-" * 70)
+        return start_time
+
+    def log_step_end(self, step_num: int):
+        """Log the completion of a step with elapsed time"""
+        end_time = time.time()
+        if step_num in self.step_times:
+            self.step_times[step_num]["end"] = end_time
+            elapsed = end_time - self.step_times[step_num]["start"]
+            print(f"[{datetime.now().strftime('%H:%M:%S')}] Completed in {elapsed:.2f}s")
 
     def run_command(self, command: list, description: str, capture_output: bool = False) -> subprocess.CompletedProcess:
         self.log(f"Running: {description}", "STEP")
@@ -52,9 +71,7 @@ class PredictionPipeline:
             raise
 
     def step_1_collect_statistics(self) -> bool:
-        self.log("=" * 60)
-        self.log("STEP 1: COLLECTING STATS", "SECTION")
-        self.log("=" * 60)
+        self.log_step_start(1, "COLLECTING STATISTICS")
 
         self.stats_dir.mkdir(parents=True, exist_ok=True)
         self.build_dir.mkdir(parents=True, exist_ok=True)
@@ -69,6 +86,7 @@ class PredictionPipeline:
         )
 
         if result.returncode != 0:
+            self.log_step_end(1)
             return False
 
         csv_files = ['team_batting_stats.csv', 'team_pitching_stats.csv', 'team_fielding_stats.csv']
@@ -77,15 +95,12 @@ class PredictionPipeline:
             dst = self.stats_dir / csv_file
             if src.exists():
                 src.replace(dst)
-                self.log(f"Moved {csv_file} to {dst}", "INFO")
 
+        self.log_step_end(1)
         return True
 
     def step_2_fetch_games(self) -> bool:
-        self.log("")
-        self.log("=" * 60)
-        self.log("STEP 2: FETCHING GAME SCHEDULE", "SECTION")
-        self.log("=" * 60)
+        self.log_step_start(2, "FETCHING GAME SCHEDULE")
 
         result = self.run_command(
             [sys.executable, "scripts/scheduleFetcher.py"],
@@ -94,6 +109,7 @@ class PredictionPipeline:
         )
 
         if result.returncode != 0:
+            self.log_step_end(2)
             return False
 
         if self.games_file.exists():
@@ -101,13 +117,11 @@ class PredictionPipeline:
                 lines = [line for line in f if line.strip()]
             self.log(f"Loaded {len(lines)} games", "INFO")
 
+        self.log_step_end(2)
         return True
 
     def step_3_enhance_team_data(self) -> bool:
-        self.log("")
-        self.log("=" * 60)
-        self.log("STEP 3: ENHANCING TEAM DATA", "SECTION")
-        self.log("=" * 60)
+        self.log_step_start(3, "ENHANCING TEAM DATA")
 
         try:
             advanced_stats = {
@@ -123,34 +137,40 @@ class PredictionPipeline:
             stats_config = self.root_dir / "stats_config.json"
             with stats_config.open('w', encoding='utf-8') as f:
                 json.dump(advanced_stats, f, indent=2)
-            self.log("Created stats configuration", "SUCCESS")
+            self.log_step_end(3)
             return True
         except Exception as e:
             self.log(f"Error enhancing team data: {e}", "ERROR")
+            self.log_step_end(3)
             return False
 
     def step_4_compile_cpp(self) -> bool:
-        self.log("")
-        self.log("=" * 60)
-        self.log("STEP 4: COMPILING PREDICTION ENGINE", "SECTION")
-        self.log("=" * 60)
+        self.log_step_start(4, "COMPILING PREDICTION ENGINE")
 
-        result = self.run_command(
+        # Compile prediction engine
+        result1 = self.run_command(
             ["g++.exe", "-std=c++17", "-fdiagnostics-color=always", "-g", "cpp/main.cpp", "cpp/GamePredictor.cpp", "-o", str(self.cpp_executable)],
             "Compile C++ prediction engine",
             capture_output=True
         )
 
-        return result.returncode == 0
+        # Compile social post generator
+        social_exe = self.build_dir / "social_posts.exe"
+        result2 = self.run_command(
+            ["g++.exe", "-std=c++17", "-fdiagnostics-color=always", "-g", "cpp/social_posts.cpp", "-o", str(social_exe)],
+            "Compile C++ social post generator",
+            capture_output=True
+        )
+
+        self.log_step_end(4)
+        return (result1.returncode == 0) and (result2.returncode == 0)
 
     def step_5_run_predictions(self) -> bool:
-        self.log("")
-        self.log("=" * 60)
-        self.log("STEP 5: RUNNING PREDICTIONS", "SECTION")
-        self.log("=" * 60)
+        self.log_step_start(5, "RUNNING PREDICTIONS")
 
         if not self.cpp_executable.exists():
             self.log(f"Executable not found: {self.cpp_executable}", "ERROR")
+            self.log_step_end(5)
             return False
 
         result = self.run_command(
@@ -160,22 +180,21 @@ class PredictionPipeline:
         )
 
         if result.returncode != 0:
+            self.log_step_end(5)
             return False
 
         with self.predictions_file.open('w', encoding='utf-8') as f:
             f.write(result.stdout)
 
-        self.log(f"Saved prediction output to {self.predictions_file.name}", "INFO")
+        self.log_step_end(5)
         return True
 
     def step_6_generate_report(self) -> bool:
-        self.log("")
-        self.log("=" * 60)
-        self.log("STEP 6: GENERATING REPORT", "SECTION")
-        self.log("=" * 60)
+        self.log_step_start(6, "GENERATING REPORT")
 
         if not self.predictions_file.exists():
             self.log("No predictions output available", "ERROR")
+            self.log_step_end(6)
             return False
 
         predictions_file = self.predictions_file
@@ -192,42 +211,51 @@ class PredictionPipeline:
                 out.write("=" * 60 + "\n\n")
                 out.write(predictions)
 
-            self.log(f"Saved report to {report_file.name}", "SUCCESS")
+            self.log_step_end(6)
             return True
         except Exception as e:
             self.log(f"Error generating report: {e}", "ERROR")
+            self.log_step_end(6)
             return False
 
     def step_7_generate_social_posts(self) -> bool:
-        self.log("")
-        self.log("=" * 60)
-        self.log("STEP 7: GENERATING SOCIAL POSTS", "SECTION")
-        self.log("=" * 60)
+        self.log_step_start(7, "GENERATING SOCIAL POSTS")
 
         if not self.predictions_file.exists():
             self.log("No prediction output available for social posts", "ERROR")
+            self.log_step_end(7)
             return False
 
         self.social_dir.mkdir(parents=True, exist_ok=True)
 
+        social_exe = self.build_dir / "social_posts.exe"
+        if social_exe.exists():
+            cmd = [str(social_exe), str(self.predictions_file), str(self.social_dir), str(self.root_dir / "mlb_logos")]
+            result = self.run_command(cmd, "Run C++ social post generator", capture_output=True)
+            if result.returncode == 0:
+                self.log_step_end(7)
+                return True
+            else:
+                self.log("C++ social post generator failed, falling back to Python generator", "WARN")
+
+        # fallback to existing Python generator
         try:
             with self.predictions_file.open('r', encoding='utf-8') as f:
                 predictions_text = f.read()
 
             manager = SocialPostManager(self.social_dir)
             manager.generate_social_posts(predictions_text)
-            self.log("Social posts generated", "SUCCESS")
+            self.log_step_end(7)
             return True
         except Exception as e:
             self.log(f"Error generating social posts: {e}", "ERROR")
+            self.log_step_end(7)
             return False
 
     def run_full_pipeline(self) -> bool:
-        self.log("")
-        self.log("=" * 60)
-        self.log("MLB GAME PREDICTION PIPELINE STARTED")
-        self.log("=" * 60)
-        self.log("")
+        print("\n" + "=" * 70)
+        print("MLB GAME PREDICTION PIPELINE")
+        print("=" * 70)
 
         steps = [
             self.step_1_collect_statistics,
@@ -241,23 +269,17 @@ class PredictionPipeline:
 
         for index, step in enumerate(steps, 1):
             if not step():
-                self.log(f"Pipeline failed at step {index}", "ERROR")
-                self.log("")
-                self.log("=" * 60)
-                self.log("PIPELINE FAILED")
-                self.log("=" * 60)
+                print("\n" + "=" * 70)
+                print(f"PIPELINE FAILED AT STEP {index}")
+                print("=" * 70 + "\n")
                 return False
 
-        self.log("")
-        self.log("=" * 60)
-        self.log("PIPELINE COMPLETED SUCCESSFULLY")
-        self.log("=" * 60)
-        self.log("")
-        self.log(f"Stats saved to: {self.stats_dir}", "INFO")
-        self.log(f"Games file: games.txt", "INFO")
-        self.log(f"Prediction output: predictions.txt", "INFO")
-        self.log(f"Social posts saved to: {self.social_dir}", "INFO")
-        self.log("")
+        print("\n" + "=" * 70)
+        print("PIPELINE COMPLETED SUCCESSFULLY")
+        print("=" * 70)
+        print(f"\nStats saved to: {self.stats_dir}")
+        print(f"Predictions saved to: {self.predictions_file}")
+        print(f"Social posts saved to: {self.social_dir}\n")
 
         return True
 
