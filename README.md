@@ -1,170 +1,128 @@
 # MLB Game Prediction Engine
 
-A data pipeline that combines baseball-reference scraping, team analytics, and a C++ prediction engine to forecast MLB game outcomes.
+Predicts the winner of MLB games. It pulls real team and starting-pitcher stats,
+runs them through a C++ prediction engine, and outputs a win probability for each
+matchup. The model **teaches itself** — it learns its weights from past seasons
+of real results instead of using hand-picked numbers.
 
-## Purpose
+## What it does
 
-The goal of this project is to automatically gather MLB team statistics, fetch the daily schedule, and generate game predictions with probabilities.
+- Gathers team stats (batting, pitching, fielding) and each game's probable
+  starting pitcher.
+- Predicts a win probability for every game on today's schedule.
+- Learns its own weights by training on real historical games (you pick the
+  seasons).
+- Can check its own accuracy against actual results from any season.
 
-It is also intended to support future automation for publishing results as social media posts with captions for Twitter and Instagram.
+## Setup
 
-## Getting Started
+You need **Python 3.7+**, a **g++** compiler on your PATH, and an internet
+connection.
 
-### Prerequisites
-- Python 3.7 or newer
-- G++ compiler available in PATH
-- Internet access for data scraping
-
-### Install and run
-
-1. Clone the repository and change into the project folder:
 ```bash
 git clone https://github.com/ConnorYelle/gamePredict.git
 cd gamePredict
 ```
 
-2. Run the full pipeline:
+## How to use it
+
+### 1. Get today's predictions
+
 ```bash
 python runPipeline.py
 ```
 
-If the pipeline completes successfully, the project will have generated updated team statistics, games, and predictions.
+This runs everything: collects stats, fetches today's games and starters,
+builds the C++ engine, and prints predictions. Results are saved in `outputs/`.
 
-## Pipeline Overview
+### 2. Let the model teach itself
 
-This project is built as a complete end-to-end pipeline:
-
-1. `statsCollector.py`
-   - Scrapes team-level batting, pitching, and fielding data from baseball-reference.
-   - Calculates additional analytics such as OPS+, BABIP, ISO, FIP, LOB%, and K/BB ratio.
-   - Writes CSV files into `rawData/<date>/`.
-
-2. `scheduleFetcher.py`
-   - Scrapes today’s MLB schedule from baseball-reference.
-   - Writes matchups into `games.txt` in the format `Home Team | Away Team`.
-
-3. `runPipeline.py`
-   - Orchestrates the full process.
-   - Runs the stats collector.
-   - Runs the schedule fetcher.
-   - Compiles the C++ prediction engine.
-   - Executes the prediction engine.
-   - Optionally saves a generated report.
-
-4. `main.cpp` / `GamePredictor.cpp`
-   - Loads configuration from `config.json`.
-   - Loads team data from the generated CSV files.
-   - Loads game matchups from `games.txt`.
-   - Produces win probability predictions for each matchup.
-
-## Project Structure
-
-```
-gamePredict/
-├── main.cpp                     # C++ entry point
-├── GamePredictor.h              # Prediction engine interface
-├── GamePredictor.cpp            # Prediction logic and data loading
-├── Team.h                       # Team statistics data structure
-├── CSVReader.h                  # CSV helper for parsing stats
-├── config.json                  # Prediction weighting configuration
-├── statsCollector.py            # MLB stats scraper
-├── scheduleFetcher.py           # Game schedule scraper
-├── runPipeline.py               # Full pipeline orchestrator
-├── games.txt                    # Daily matchups
-├── rawData/                     # Scraped statistics output
-└── tests/                       # Validation tests
-```
-
-## Usage
-
-### Run the full pipeline
 ```bash
-python runPipeline.py
+python scripts/train_weights.py
 ```
 
-### Run individual steps
+Trains on past seasons of real games and writes the learned weights to
+`config.json`. Future predictions automatically use them. Run it again any time
+to re-learn from newer data.
 
-Collect statistics only:
+### 3. Check how accurate it is
+
 ```bash
-python statsCollector.py
+python scripts/validate_predictions.py --backtest
 ```
 
-Fetch today’s schedule only:
+Replays a whole season of real games and reports how often the model was right,
+versus just always picking the home team.
+
+## Choosing the season
+
+Yes — the season is a flag you can change whenever you want.
+
+**Training** (`train_weights.py`):
+
 ```bash
-python scheduleFetcher.py
+# Train on 2024, test on 2025 (the default)
+python scripts/train_weights.py
+
+# Train on multiple seasons
+python scripts/train_weights.py --train-seasons 2022,2023,2024 --val-season 2025
+
+# Preview results without saving the weights
+python scripts/train_weights.py --dry-run
+
+# Ignore starting pitchers (team stats only)
+python scripts/train_weights.py --no-pitchers
 ```
 
-Compile and run the C++ predictor only:
+**Backtesting** (`validate_predictions.py --backtest`):
+
 ```bash
-g++ -g main.cpp GamePredictor.cpp -o main.exe
-./main.exe
+# Pick the season and date range
+python scripts/validate_predictions.py --backtest --season 2023
+python scripts/validate_predictions.py --backtest --season 2025 --start 2025-05-01 --end 2025-10-31
+
+# Skip starting pitchers
+python scripts/validate_predictions.py --backtest --no-pitchers
 ```
 
-### Run tests
-```bash
-g++ tests/scheduleFetcherTest.cpp -o tests/scheduleFetcherTest.exe
-./tests/scheduleFetcherTest.exe
-```
+## All the commands
 
-## Output
+| Command | What it does |
+|---|---|
+| `python runPipeline.py` | Run the full pipeline and print today's predictions |
+| `python scripts/train_weights.py` | Learn weights from past seasons → `config.json` |
+| `python scripts/validate_predictions.py --backtest` | Measure accuracy against a real season |
+| `python scripts/statsCollector.py` | Collect team batting/pitching/fielding stats |
+| `python scripts/scheduleFetcher.py` | Fetch today's games + probable starters → `games.txt` |
+| `python scripts/collect_pitchers.py` | Fetch starting-pitcher stats → `StartingPitchers.csv` |
 
-After the pipeline runs, the following files are produced:
+Common flags: `--season` / `--start` / `--end` (backtest window), `--train-seasons` / `--val-season` (training seasons), `--no-pitchers` (team stats only), `--dry-run` (don't save). Add `-h` to any command to see its options.
 
-- `games.txt` — today's matchups
-- `rawData/<date>/team_batting_stats.csv`
-- `rawData/<date>/team_pitching_stats.csv`
-- `rawData/<date>/team_fielding_stats.csv`
-- `main.exe` — compiled prediction engine
-- Optional prediction report files if enabled by the C++ engine
+## How the prediction works
 
-## How the Prediction Model Works
-
-The predictor compares home and away teams using offensive and defensive ratings.
-
-- Offensive strength is based on batting and power metrics.
-- Defensive strength is based on pitching and fielding metrics.
-- Home teams receive a small advantage multiplier.
-
-A simple probability model is used:
+Each team gets a strength score from three parts — offense (R/G, OBP, SLG),
+defense (RA/G, fielding %), and its starting pitcher (ERA, WHIP, K/9, plus recent
+form). The home team gets a small home-field bump. The win probability is the
+home team's share of the combined strength:
 
 ```text
-homeScore = homeTeamRating * homeFieldAdvantage
-awayScore = awayTeamRating
-probability = homeScore / (homeScore + awayScore)
+strength     = offense + defense + startingPitcher
+probability  = homeStrength / (homeStrength + awayStrength)
 ```
 
-The result is a win probability for the home team.
+The "weights" that decide how much each stat matters live in `config.json` and
+are set by the trainer. If a game's starter isn't announced yet, the pitcher part
+is skipped and the model uses team stats only.
 
-## Configuration
+## Where things go
 
-Update `config.json` if you want to tune the prediction weights:
+- `outputs/` — predictions, reports, and social posts
+- `data/rawData/<date>/` — the stats used for that day's predictions
+- `data/cache/` — saved API responses, so repeat runs are fast
+- `config.json` — the model's learned weights
 
-```json
-{
-  "weights": {
-    "runsPerGameWeight": 0.4,
-    "onBasePercentageWeight": 50,
-    "sluggingPercentageWeight": 30,
-    "offenseWeight": 0.6,
-    "defenseWeight": 0.4,
-    "homeFieldAdvantage": 1.05
-  }
-}
-```
-## Notes
+## Latest validation
 
-- The current project expects stats to be loaded from `rawData/<date>/`.
-- `games.txt` must use the format `Home Team | Away Team`.
-- The pipeline is intended for batch use and should be run daily for new predictions.
-
-## Model validation (latest)
-Generated: 2026-05-27 13:51 UTC
-
-- Predictions parsed: 15
-- Actual outcomes parsed: 15
-- Matched games: 15
-- Unmatched games: 0
-- Pick accuracy: 86.67%
-- Average probability assigned to winners: 51.37%
-- Brier score: 0.2369
-- Stats directory used: data/rawData\05-13-26
+<!-- METRICS-START -->
+Run `python scripts/validate_predictions.py --backtest` to generate results.
+<!-- METRICS-END -->

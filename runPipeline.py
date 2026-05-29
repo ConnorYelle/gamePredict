@@ -120,6 +120,24 @@ class PredictionPipeline:
         self.log_step_end(2)
         return True
 
+    def step_collect_pitchers(self) -> bool:
+        self.log_step_start(3, "COLLECTING STARTING PITCHERS")
+
+        # Optional: writes StartingPitchers.csv next to the team CSVs so the
+        # predictor can factor in the probable starters. Failure is non-fatal;
+        # the model falls back to team-only when pitcher data is missing.
+        result = self.run_command(
+            [sys.executable, "scripts/collect_pitchers.py"],
+            "Fetch probable starting pitchers and their stats",
+            capture_output=False
+        )
+
+        if result.returncode != 0:
+            self.log("Starting pitcher collection failed; continuing team-only", "WARN")
+
+        self.log_step_end(3)
+        return True
+
     def step_3_enhance_team_data(self) -> bool:
         self.log_step_start(3, "ENHANCING TEAM DATA")
 
@@ -260,6 +278,7 @@ class PredictionPipeline:
         steps = [
             self.step_1_collect_statistics,
             self.step_2_fetch_games,
+            self.step_collect_pitchers,
             self.step_3_enhance_team_data,
             self.step_4_compile_cpp,
             self.step_5_run_predictions,

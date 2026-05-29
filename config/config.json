@@ -1,10 +1,14 @@
 {
   "weights": {
-    "runsPerGameWeight": 0.4,
-    "onBasePercentageWeight": 50,
-    "sluggingPercentageWeight": 30,
-    "offenseWeight": 0.6,
-    "defenseWeight": 0.4,
-    "homeFieldAdvantage": 1.05
+    "runsPerGameWeight": 0.21328125000000003,
+    "onBasePercentageWeight": -3.0975341796875,
+    "sluggingPercentageWeight": 0.2783203125,
+    "offenseWeight": 1.9078124999999995,
+    "defenseWeight": 0.0066406250000000016,
+    "homeFieldAdvantage": 1.0986059188842765,
+    "pitcherEraWeight": 3.03125,
+    "pitcherWhipWeight": -0.265625,
+    "pitcherK9Weight": -0.01385498046875,
+    "pitcherRecentFormWeight": 0.0042266845703125
   }
 }

@@ -1,24 +1,29 @@
 #!/usr/bin/env python3
 """Validate model predictions against actual game outcomes.
 
-Usage:
-    python scripts/validate_predictions.py
-        --predictions outputs/predictions.txt
-        --games outputs/games.txt
+Two modes:
 
-Metrics:
-- matched games
-- accuracy (correct picks where model > 0.5)
-- Brier score (proper binary form)
-- average probability assigned to winners
+1. Default - grade a saved slate (predictions.txt vs games.txt):
+       python scripts/validate_predictions.py
+           --predictions outputs/predictions.txt
+           --games outputs/games.txt
+
+2. Backtest - compare the current model against actual MLB results pulled from
+   the Stats API, using the same formula/weights the C++ engine uses
+   (cpp/GamePredictor.cpp), including the starting-pitcher term:
+       python scripts/validate_predictions.py --backtest
+           --season 2025 --start 2025-05-01 --end 2025-10-31
+
+Metrics: accuracy, Brier score, average probability assigned to winners, and a
+home-field baseline (backtest only).
 """
 
 import argparse
-import json
 import os
 import re
-import urllib.request
 from typing import List, Tuple, Dict, Optional
+
+import mlb_data
 
 
 def parse_predictions(path: str) -> List[Dict]:
@@ -72,7 +77,9 @@ def parse_games(path: str) -> List[Tuple[str, str]]:
                 continue
 
             if "|" in line:
-                left, right = [x.strip() for x in line.split("|", 1)]
+                # Format: Home | Away [| HomeStarter | AwayStarter]
+                parts = [x.strip() for x in line.split("|")]
+                left, right = parts[0], parts[1]
                 games.append((left, right))
             elif "@" in line:
                 away, home = [x.strip() for x in line.split("@", 1)]
@@ -158,167 +165,60 @@ def validate(predictions_path: str, games_path: str) -> Dict:
 
 
 # ---------------------------------------------------------------------------
-# Backtest mode: compare the current model against actual MLB game results.
-#
-# Instead of grading a single day's slate (predictions.txt vs games.txt), this
-# pulls real regular-season results and season team stats from the public MLB
-# Stats API and runs the *same* win-probability formula the C++ engine uses
-# (cpp/GamePredictor.cpp), loading the live weights from config/config.json.
-# Defaults to the heart of the 2025 season, May through October.
+# Backtest mode
 # ---------------------------------------------------------------------------
+def build_game_inputs(season: int, start_date: str, end_date: str,
+                      use_pitchers: bool = True, use_cache: bool = True) -> List[Dict]:
+    """Assemble per-game model inputs (team stats, pitcher stats, label) for a
+    season window, pulling everything needed from the Stats API."""
+    team_stats = mlb_data.team_model_stats(season, use_cache=use_cache)
+    games = mlb_data.season_games(start_date, end_date, season, use_cache=use_cache)
 
-ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-CONFIG_PATH = os.path.join(ROOT, "config", "config.json")
+    season_cache: Dict[int, Optional[Dict]] = {}
 
-STATS_API = "https://statsapi.mlb.com/api/v1/teams/stats"
-SCHEDULE_API = "https://statsapi.mlb.com/api/v1/schedule"
+    def pitcher_inputs(pid, date):
+        if not use_pitchers or not pid:
+            return None
+        if pid not in season_cache:
+            season_cache[pid] = mlb_data.pitcher_season_stats(pid, season, use_cache=use_cache)
+        base = season_cache[pid]
+        if base is None:
+            return None
+        p = dict(base)
+        p["recentEra"] = mlb_data.recent_era(pid, season, before_date=date,
+                                              use_cache=use_cache)
+        return p
 
-# Defaults mirror GamePredictor.h so a missing/partial config still works.
-DEFAULT_WEIGHTS = {
-    "runsPerGameWeight": 0.4,
-    "onBasePercentageWeight": 50.0,
-    "sluggingPercentageWeight": 30.0,
-    "offenseWeight": 0.6,
-    "defenseWeight": 0.4,
-    "homeFieldAdvantage": 1.05,
-}
-
-
-def load_weights(config_path: str = CONFIG_PATH) -> Dict[str, float]:
-    weights = dict(DEFAULT_WEIGHTS)
-    try:
-        with open(config_path, encoding="utf-8") as f:
-            cfg = json.load(f)
-        for key, val in cfg.get("weights", {}).items():
-            if key in weights:
-                weights[key] = float(val)
-    except (OSError, ValueError):
-        pass
-    return weights
-
-
-def _fetch_json(url: str) -> dict:
-    req = urllib.request.Request(url, headers={"User-Agent": "gamePrediction-validator"})
-    with urllib.request.urlopen(req, timeout=60) as resp:
-        return json.loads(resp.read().decode("utf-8"))
-
-
-def _to_float(value, default=0.0) -> float:
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        return default
-
-
-def fetch_team_model_stats(season: int) -> Dict[int, Dict[str, float]]:
-    """Return {team_id: model inputs} for the given season.
-
-    Mirrors the inputs GamePredictor reads from the scraped CSVs:
-    runs/game and OBP/SLG (offense), runs-allowed/game and fielding% (defense).
-    """
-    stats: Dict[int, Dict[str, float]] = {}
-
-    hitting = _fetch_json(f"{STATS_API}?season={season}&group=hitting&stats=season&sportId=1")
-    for split in hitting["stats"][0]["splits"]:
-        stat = split["stat"]
-        games = _to_float(stat.get("gamesPlayed")) or 1.0
-        stats[split["team"]["id"]] = {
-            "runsPerGame": _to_float(stat.get("runs")) / games,
-            "onBasePercentage": _to_float(stat.get("obp")),
-            "sluggingPercentage": _to_float(stat.get("slg")),
-        }
-
-    pitching = _fetch_json(f"{STATS_API}?season={season}&group=pitching&stats=season&sportId=1")
-    for split in pitching["stats"][0]["splits"]:
-        stat = split["stat"]
-        games = _to_float(stat.get("gamesPlayed")) or 1.0
-        team = stats.setdefault(split["team"]["id"], {})
-        team["runsAllowedPerGame"] = _to_float(stat.get("runs")) / games
-
-    fielding = _fetch_json(f"{STATS_API}?season={season}&group=fielding&stats=season&sportId=1")
-    for split in fielding["stats"][0]["splits"]:
-        team = stats.setdefault(split["team"]["id"], {})
-        team["fieldingPercentage"] = _to_float(split["stat"].get("fielding"))
-
-    return stats
-
-
-def fetch_results(start_date: str, end_date: str, season: int) -> List[Tuple[int, int, bool]]:
-    """Return [(home_id, away_id, home_won)] for completed regular-season games.
-
-    The winner comes from the final score: the API only sets ``isWinner`` on the
-    winning side, so reading that flag would silently drop every away win. The
-    schedule can also list a game under multiple date buckets, so dedupe by gamePk.
-    """
-    url = (f"{SCHEDULE_API}?sportId=1&gameType=R&season={season}"
-           f"&startDate={start_date}&endDate={end_date}")
-    data = _fetch_json(url)
-    games: List[Tuple[int, int, bool]] = []
-    seen = set()
-    for day in data.get("dates", []):
-        for game in day.get("games", []):
-            game_pk = game.get("gamePk")
-            if game_pk in seen:
-                continue
-            if game.get("status", {}).get("abstractGameState") != "Final":
-                continue
-            home = game["teams"]["home"]
-            away = game["teams"]["away"]
-            home_score = home.get("score")
-            away_score = away.get("score")
-            if home_score is None or away_score is None or home_score == away_score:
-                continue
-            seen.add(game_pk)
-            games.append((home["team"]["id"], away["team"]["id"], home_score > away_score))
-    return games
-
-
-def home_win_probability(home: Dict[str, float], away: Dict[str, float],
-                         w: Dict[str, float]) -> float:
-    """Python port of GamePredictor::predictWinProbability."""
-    def offense(t):
-        return (t.get("runsPerGame", 0.0) * w["runsPerGameWeight"]
-                + t.get("onBasePercentage", 0.0) * w["onBasePercentageWeight"]
-                + t.get("sluggingPercentage", 0.0) * w["sluggingPercentageWeight"])
-
-    def defense(t):
-        return (1.0 / (t.get("runsAllowedPerGame", 0.0) + 0.1)) * t.get("fieldingPercentage", 0.0) * 100
-
-    home_strength = (offense(home) * w["offenseWeight"]
-                     + defense(home) * w["defenseWeight"]) * w["homeFieldAdvantage"]
-    away_strength = offense(away) * w["offenseWeight"] + defense(away) * w["defenseWeight"]
-
-    total = home_strength + away_strength
-    if total == 0:
-        return 0.5
-    return min(0.99, max(0.01, home_strength / total))
-
-
-def backtest(season: int, start_date: str, end_date: str,
-             config_path: str = CONFIG_PATH) -> Dict:
-    weights = load_weights(config_path)
-    team_stats = fetch_team_model_stats(season)
-    results = fetch_results(start_date, end_date, season)
-
-    evaluated = correct = home_wins = 0
-    brier_sum = 0.0
-    winner_prob_sum = 0.0
-
-    for home_id, away_id, home_won in results:
-        if home_id not in team_stats or away_id not in team_stats:
+    inputs = []
+    for g in games:
+        if g["home_id"] not in team_stats or g["away_id"] not in team_stats:
             continue
-        p_home = home_win_probability(team_stats[home_id], team_stats[away_id], weights)
-        if (p_home >= 0.5) == home_won:
+        inputs.append({
+            "home": team_stats[g["home_id"]],
+            "away": team_stats[g["away_id"]],
+            "home_sp": pitcher_inputs(g["home_sp_id"], g["date"]),
+            "away_sp": pitcher_inputs(g["away_sp_id"], g["date"]),
+            "home_won": g["home_won"],
+        })
+    return inputs
+
+
+def evaluate(inputs: List[Dict], weights: Dict[str, float]) -> Dict:
+    evaluated = correct = home_wins = 0
+    brier_sum = winner_prob_sum = 0.0
+
+    for g in inputs:
+        p_home = mlb_data.home_win_probability(g["home"], g["away"],
+                                               g["home_sp"], g["away_sp"], weights)
+        if (p_home >= 0.5) == g["home_won"]:
             correct += 1
-        prob_for_winner = p_home if home_won else (1.0 - p_home)
+        prob_for_winner = p_home if g["home_won"] else (1.0 - p_home)
         brier_sum += (1.0 - prob_for_winner) ** 2
         winner_prob_sum += prob_for_winner
-        home_wins += home_won
+        home_wins += g["home_won"]
         evaluated += 1
 
     return {
-        "season": season,
-        "window": f"{start_date}..{end_date}",
         "games_evaluated": evaluated,
         "accuracy": correct / evaluated if evaluated else 0.0,
         "home_field_baseline": home_wins / evaluated if evaluated else 0.0,
@@ -327,16 +227,20 @@ def backtest(season: int, start_date: str, end_date: str,
     }
 
 
-def run_backtest(season: int, start_date: str, end_date: str) -> None:
+def run_backtest(season: int, start_date: str, end_date: str,
+                 use_pitchers: bool = True) -> None:
     print("\n=== Model Backtest vs. Actual MLB Results ===")
     print(f"Season {season}, window {start_date} -> {end_date}")
     print("Model: cpp/GamePredictor.cpp formula with config/config.json weights")
+    print(f"Starting pitcher: {'included' if use_pitchers else 'excluded'}")
     try:
-        results = backtest(season, start_date, end_date)
+        weights = mlb_data.load_weights()
+        inputs = build_game_inputs(season, start_date, end_date, use_pitchers)
     except Exception as exc:  # network/API issues
         print(f"Could not reach the MLB Stats API: {exc}")
         return
 
+    results = evaluate(inputs, weights)
     if not results["games_evaluated"]:
         print("No completed games found to validate against.")
         return
@@ -358,10 +262,12 @@ def main():
     parser.add_argument("--season", type=int, default=2025)
     parser.add_argument("--start", default="2025-05-01")
     parser.add_argument("--end", default="2025-10-31")
+    parser.add_argument("--no-pitchers", action="store_true",
+                        help="Backtest with team stats only (skip starting pitchers)")
     args = parser.parse_args()
 
     if args.backtest:
-        run_backtest(args.season, args.start, args.end)
+        run_backtest(args.season, args.start, args.end, use_pitchers=not args.no_pitchers)
         return
 
     if not os.path.exists(args.predictions):

@@ -45,6 +45,10 @@ void GamePredictor::loadConfig(const std::string& configPath) {
     offenseWeight = extractJsonDouble(configJson, "offenseWeight");
     defenseWeight = extractJsonDouble(configJson, "defenseWeight");
     homeFieldAdvantage = extractJsonDouble(configJson, "homeFieldAdvantage");
+    pitcherEraWeight = extractJsonDouble(configJson, "pitcherEraWeight");
+    pitcherWhipWeight = extractJsonDouble(configJson, "pitcherWhipWeight");
+    pitcherK9Weight = extractJsonDouble(configJson, "pitcherK9Weight");
+    pitcherRecentFormWeight = extractJsonDouble(configJson, "pitcherRecentFormWeight");
 }
 
 std::string GamePredictor::normalizeTeamName(const std::string& name) {
@@ -144,29 +148,76 @@ void GamePredictor::loadAllStats(const std::string& baseDataPath) {
             }
         }
     }
+
+    // Load starting pitcher stats (optional). Format: name,era,whip,k9,recentEra
+    // Missing/blank values are stored as -1 ("unknown") and skipped in scoring.
+    auto parseStat = [](const std::string& s) -> double {
+        try {
+            return s.empty() ? -1.0 : std::stod(s);
+        } catch (...) {
+            return -1.0;
+        }
+    };
+    auto pitcherData = CSVReader::readCSV(baseDataPath + "/StartingPitchers.csv");
+    if (pitcherData.size() > 1) {
+        for (size_t i = 1; i < pitcherData.size(); i++) { // Skip header
+            auto& row = pitcherData[i];
+            if (row.size() < 2) continue;
+
+            std::string name = row[0];
+            name.erase(0, name.find_first_not_of(" \t"));
+            name.erase(name.find_last_not_of(" \t") + 1);
+            if (name.empty()) continue;
+
+            Pitcher& p = pitchers[name];
+            p.name = name;
+            p.era = parseStat(row[1]);
+            if (row.size() > 2) p.whip = parseStat(row[2]);
+            if (row.size() > 3) p.k9 = parseStat(row[3]);
+            if (row.size() > 4) p.recentEra = parseStat(row[4]);
+        }
+    }
 }
 
-double GamePredictor::predictWinProbability(const Team& homeTeam, const Team& awayTeam) {
+double GamePredictor::pitcherScore(const Pitcher* pitcher) const {
+    if (!pitcher) return 0.0;
+
+    double score = 0.0;
+    // Lower ERA/WHIP is better -> invert. K/9 higher is better -> direct.
+    if (pitcher->era >= 0.0) score += (1.0 / (pitcher->era + 0.1)) * pitcherEraWeight;
+    if (pitcher->whip >= 0.0) score += (1.0 / (pitcher->whip + 0.1)) * pitcherWhipWeight;
+    if (pitcher->k9 >= 0.0) score += pitcher->k9 * pitcherK9Weight;
+    if (pitcher->recentEra >= 0.0) score += (1.0 / (pitcher->recentEra + 0.1)) * pitcherRecentFormWeight;
+    return score;
+}
+
+double GamePredictor::predictWinProbability(const Team& homeTeam, const Team& awayTeam,
+                                            const Pitcher* homeStarter,
+                                            const Pitcher* awayStarter) {
     // Calculate offensive strength (higher is better)
-    double homeOffense = (homeTeam.runsPerGame * runsPerGameWeight) + 
-                         (homeTeam.onBasePercentage * onBasePercentageWeight) + 
+    double homeOffense = (homeTeam.runsPerGame * runsPerGameWeight) +
+                         (homeTeam.onBasePercentage * onBasePercentageWeight) +
                          (homeTeam.sluggingPercentage * sluggingPercentageWeight);
-    double awayOffense = (awayTeam.runsPerGame * runsPerGameWeight) + 
-                         (awayTeam.onBasePercentage * onBasePercentageWeight) + 
+    double awayOffense = (awayTeam.runsPerGame * runsPerGameWeight) +
+                         (awayTeam.onBasePercentage * onBasePercentageWeight) +
                          (awayTeam.sluggingPercentage * sluggingPercentageWeight);
-    
+
     // Calculate defensive strength (lower RA/G is better, higher Fld% is better)
     double homeDefense = (1.0 / (homeTeam.runsAllowedPerGame + 0.1)) * homeTeam.fieldingPercentage * 100;
     double awayDefense = (1.0 / (awayTeam.runsAllowedPerGame + 0.1)) * awayTeam.fieldingPercentage * 100;
-    
+
+    // Starting pitcher contribution (0 when the starter is unknown or untuned)
+    double homePitching = pitcherScore(homeStarter);
+    double awayPitching = pitcherScore(awayStarter);
+
     // Combined team strength (home field advantage applied)
-    double homeStrength = (homeOffense * offenseWeight + homeDefense * defenseWeight) * homeFieldAdvantage;
-    double awayStrength = (awayOffense * offenseWeight + awayDefense * defenseWeight);
-    
+    double homeStrength = (homeOffense * offenseWeight + homeDefense * defenseWeight + homePitching) * homeFieldAdvantage;
+    double awayStrength = (awayOffense * offenseWeight + awayDefense * defenseWeight + awayPitching);
+
     // Calculate win probability using logistic function
     double totalStrength = homeStrength + awayStrength;
     if (totalStrength == 0) return 0.5;
-    
+
     double winProbability = homeStrength / totalStrength;
     return std::min(0.99, std::max(0.01, winProbability));
 }
@@ -175,6 +226,19 @@ Team* GamePredictor::getTeam(const std::string& teamName) {
     auto normalized = normalizeTeamName(teamName);
     auto it = teams.find(normalized);
     if (it != teams.end()) {
+        return &it->second;
+    }
+    return nullptr;
+}
+
+Pitcher* GamePredictor::getPitcher(const std::string& pitcherName) {
+    std::string name = pitcherName;
+    name.erase(0, name.find_first_not_of(" \t"));
+    name.erase(name.find_last_not_of(" \t") + 1);
+    if (name.empty()) return nullptr;
+
+    auto it = pitchers.find(name);
+    if (it != pitchers.end()) {
         return &it->second;
     }
     return nullptr;
@@ -192,14 +256,25 @@ std::vector<Game> GamePredictor::loadGames(const std::string& gamesPath) {
     while (std::getline(gamesFile, line)) {
         // Skip empty lines
         if (line.empty()) continue;
-        
-        // Find the pipe separator
-        size_t pipePos = line.find('|');
-        if (pipePos == std::string::npos) continue;
-        
-        std::string homeTeam = line.substr(0, pipePos);
-        std::string awayTeam = line.substr(pipePos + 1);
-        games.push_back({homeTeam, awayTeam});
+
+        // Split on '|'. Format: Home | Away [| HomeStarter | AwayStarter]
+        std::vector<std::string> fields;
+        std::stringstream ss(line);
+        std::string field;
+        while (std::getline(ss, field, '|')) {
+            field.erase(0, field.find_first_not_of(" \t\r"));
+            field.erase(field.find_last_not_of(" \t\r") + 1);
+            fields.push_back(field);
+        }
+
+        if (fields.size() < 2) continue;
+
+        Game game;
+        game.homeTeam = fields[0];
+        game.awayTeam = fields[1];
+        if (fields.size() > 2) game.homeStarter = fields[2];
+        if (fields.size() > 3) game.awayStarter = fields[3];
+        games.push_back(game);
     }
 
     return games;
@@ -216,7 +291,10 @@ void GamePredictor::predictAllGames(const std::vector<Game>& games) {
 
         if (home && away) {
 
-            double homeWinProb = predictWinProbability(*home, *away);
+            Pitcher* homeSP = getPitcher(game.homeStarter);
+            Pitcher* awaySP = getPitcher(game.awayStarter);
+
+            double homeWinProb = predictWinProbability(*home, *away, homeSP, awaySP);
             double awayWinProb = 1.0 - homeWinProb;
 
             Team* favorite;
@@ -236,6 +314,14 @@ void GamePredictor::predictAllGames(const std::vector<Game>& games) {
                       << "\n";
 
             std::cout << "------------------------------------------------------------\n";
+
+            if (!game.awayStarter.empty() || !game.homeStarter.empty()) {
+                std::cout << "Starters: "
+                          << (game.awayStarter.empty() ? "TBD" : game.awayStarter)
+                          << " vs "
+                          << (game.homeStarter.empty() ? "TBD" : game.homeStarter)
+                          << "\n";
+            }
 
             std::cout << std::left << std::setw(25)
                       << away->name
