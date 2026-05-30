@@ -1,0 +1,82 @@
+============================================================
+ MLB GAME PREDICTION ENGINE — COMMANDS
+============================================================
+
+MAIN
+------------------------------------------------------------
+
+python runPipeline.py
+    Does everything: gets today's stats and games, makes predictions, and
+    saves yesterday's final scores. This is the main command.
+
+python scripts/train_weights.py
+    Teaches the model from past seasons so future predictions are smarter.
+
+python scripts/validate_predictions.py --backtest
+    Replays a past season and reports how accurate the model was.
+
+python scripts/archive_schedule.py
+    Saves yesterday's games and final scores into data/schedules/.
+
+
+TRAIN OPTIONS (add to train_weights.py)
+------------------------------------------------------------
+
+--train-seasons 2022,2023,2024   Learn from these seasons (comma-separated).
+--val-season 2025                Season used to test itself.
+--iters 40                       How hard it tries (higher = slower).
+--no-pitchers                    Use team stats only, ignore pitchers.
+--dry-run                        Show results but don't save them.
+
+
+BACKTEST OPTIONS (add to validate_predictions.py --backtest)
+------------------------------------------------------------
+
+--season 2023          Which season to replay.
+--start 2025-05-01     Only games on/after this date.
+--end 2025-10-31       Only games on/before this date.
+--no-pitchers          Use team stats only, ignore pitchers.
+
+
+CHECK A SAVED DAY
+------------------------------------------------------------
+
+python scripts/validate_predictions.py --predictions data/schedules/05-29-26/predictions.txt --results data/schedules/05-29-26/final_scores.csv
+    Compares one saved day's predictions to the real final scores.
+    (Replace 05-29-26 with a real folder name.)
+
+
+SAVE PAST DAYS (add to archive_schedule.py)
+------------------------------------------------------------
+
+--date 2026-05-29                       Save one specific day.
+--start 2026-05-01 --end 2026-05-29     Save a range of days.
+
+Get-ChildItem data/schedules
+    Lists the days you've already saved.
+
+
+INDIVIDUAL STEPS (normally run automatically)
+------------------------------------------------------------
+
+python scripts/statsCollector.py
+    Downloads team batting, pitching, and fielding stats.
+
+python scripts/scheduleFetcher.py
+    Gets today's games and starting pitchers into outputs/games.txt.
+
+python scripts/collect_pitchers.py
+    Gets today's starting pitchers' stats into StartingPitchers.csv.
+
+
+MAINTENANCE (run rarely)
+------------------------------------------------------------
+
+python scripts/update_readme_metrics.py
+    Updates the accuracy summary in README.md.
+
+python scripts/install_git_hook.py
+    One-time setup so README accuracy updates automatically with Git.
+
+python -m unittest discover -s tests
+    Runs the automated tests (needs the g++ compiler).

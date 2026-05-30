@@ -9,7 +9,7 @@ Run: python scripts/update_readme_metrics.py
 import os
 import sys
 from datetime import datetime
-from validate_predictions import validate
+from mlb.slate_grader import validate
 
 
 ROOT = os.path.dirname(os.path.dirname(__file__))

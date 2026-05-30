@@ -12,7 +12,9 @@ import time
 from datetime import datetime, timedelta
 from pathlib import Path
 
-from scripts.social_post_generator import SocialPostManager
+from scripts.mlb import MlbStatsApi
+from scripts.mlb.results_archive import ResultsArchive, archive_day
+from scripts.mlb.social import SocialPostManager
 
 class PredictionPipeline:
     def __init__(self):
@@ -270,6 +272,37 @@ class PredictionPipeline:
             self.log_step_end(7)
             return False
 
+    def step_8_archive_results(self) -> bool:
+        self.log_step_start(8, "ARCHIVING RESULTS FOR VALIDATION")
+
+        # Non-fatal: keeps a per-day record under data/schedules/ so predictions
+        # can be graded against real scores later. Failure never blocks the run.
+        try:
+            api = MlbStatsApi()
+            archive = ResultsArchive()
+
+            # Yesterday's games are final now; today's haven't been played yet.
+            yesterday = datetime.now() - timedelta(days=1)
+            try:
+                rows, path = archive_day(api, yesterday, archive)
+                if path:
+                    self.log(f"Archived {len(rows)} final games for "
+                             f"{yesterday:%Y-%m-%d} -> {path}", "INFO")
+                else:
+                    self.log(f"No completed games to archive for {yesterday:%Y-%m-%d}", "INFO")
+            except Exception as e:
+                self.log(f"Could not archive yesterday's scores: {e}", "WARN")
+
+            # Snapshot today's matchups + predictions so they survive the next
+            # run and can be graded once today's scores are final.
+            snap_dir = archive.snapshot(datetime.now(), self.games_file, self.predictions_file)
+            self.log(f"Snapshotted today's games/predictions to {snap_dir}", "INFO")
+        except Exception as e:
+            self.log(f"Result archiving step failed: {e}", "WARN")
+
+        self.log_step_end(8)
+        return True
+
     def run_full_pipeline(self) -> bool:
         print("\n" + "=" * 70)
         print("MLB GAME PREDICTION PIPELINE")
@@ -284,6 +317,7 @@ class PredictionPipeline:
             self.step_5_run_predictions,
             self.step_6_generate_report,
             self.step_7_generate_social_posts,
+            self.step_8_archive_results,
         ]
 
         for index, step in enumerate(steps, 1):
@@ -298,7 +332,8 @@ class PredictionPipeline:
         print("=" * 70)
         print(f"\nStats saved to: {self.stats_dir}")
         print(f"Predictions saved to: {self.predictions_file}")
-        print(f"Social posts saved to: {self.social_dir}\n")
+        print(f"Social posts saved to: {self.social_dir}")
+        print(f"Daily results archived to: {self.root_dir / 'data' / 'schedules'}\n")
 
         return True
 
