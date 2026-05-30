@@ -78,5 +78,7 @@ python scripts/update_readme_metrics.py
 python scripts/install_git_hook.py
     One-time setup so README accuracy updates automatically with Git.
 
-python -m unittest discover -s tests
-    Runs the automated tests (needs the g++ compiler).
+python -m unittest discover
+    Runs the automated tests (run from the repo root). The C++ engine tests
+    need the g++ compiler; they verify compilation and, where the local
+    toolchain can link, also build and run the engine.
