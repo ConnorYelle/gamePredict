@@ -1,8 +1,11 @@
 #include <algorithm>
+#include <cmath>
+#include <cstdio>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <regex>
+#include <sstream>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -16,6 +19,17 @@ struct GamePrediction {
     double home_prob{0.0};
     std::string favorite;
     double favorite_prob{0.0};
+};
+
+// Per-team season stats used to populate the matchup detail panel. NaN marks a
+// value that could not be loaded, which the front-end renders as a dash.
+struct TeamStats {
+    double rpg = std::nan("");  // runs per game
+    double obp = std::nan("");  // on-base percentage
+    double slg = std::nan("");  // slugging percentage
+    double hr  = std::nan("");  // home runs
+    double rag = std::nan("");  // runs allowed per game
+    double fld = std::nan("");  // fielding percentage
 };
 
 static inline std::string trim(const std::string &s) {
@@ -81,9 +95,104 @@ std::string fmt_pct(double v) {
     std::snprintf(buf, sizeof(buf), "%.1f%%", v * 100.0);
     return std::string(buf);
 }
+
+// ------------------------------------------------------------------ //
+// Team stats (for the matchup detail panel)
+// ------------------------------------------------------------------ //
+static std::vector<std::vector<std::string>> read_csv(const fs::path &path) {
+    std::vector<std::vector<std::string>> rows;
+    std::ifstream f(path);
+    if (!f) return rows;
+    std::string line;
+    while (std::getline(f, line)) {
+        std::vector<std::string> row;
+        std::stringstream ss(line);
+        std::string cell;
+        while (std::getline(ss, cell, ',')) row.push_back(cell);
+        if (!row.empty()) rows.push_back(row);
+    }
+    return rows;
+}
+
+static double parse_num(const std::string &s) {
+    try {
+        return std::stod(trim(s));
+    } catch (...) {
+        return std::nan("");
+    }
+}
+
+// Most recent data/rawData/<date>/ folder that has the batting + fielding files.
+static fs::path latest_stats_dir() {
+    fs::path base("data/rawData");
+    if (!fs::exists(base) || !fs::is_directory(base)) return {};
+    fs::path best;
+    for (const auto &e : fs::directory_iterator(base)) {
+        if (!e.is_directory()) continue;
+        if (fs::exists(e.path() / "TeamStandardBatting.txt") &&
+            fs::exists(e.path() / "TeamFielding.txt")) {
+            if (best.empty() || e.path().filename() > best.filename())
+                best = e.path();
+        }
+    }
+    return best;
+}
+
+// Load per-team season stats keyed by full team name (matching the names in
+// predictions.txt). Missing files/fields simply leave NaNs behind.
+static std::unordered_map<std::string, TeamStats> load_team_stats() {
+    std::unordered_map<std::string, TeamStats> stats;
+    fs::path dir = latest_stats_dir();
+    if (dir.empty()) return stats;
+
+    // Batting: [0]=Tm [3]=R/G [11]=HR [18]=OBP [19]=SLG
+    auto batting = read_csv(dir / "TeamStandardBatting.txt");
+    for (size_t i = 1; i < batting.size(); ++i) {
+        const auto &r = batting[i];
+        if (r.size() < 20) continue;
+        std::string team = trim(r[0]);
+        if (team.empty()) continue;
+        TeamStats &t = stats[team];
+        t.rpg = parse_num(r[3]);
+        t.hr  = parse_num(r[11]);
+        t.obp = parse_num(r[18]);
+        t.slg = parse_num(r[19]);
+    }
+
+    // Fielding: [0]=Tm [2]=RA/G [13]=Fld%
+    auto fielding = read_csv(dir / "TeamFielding.txt");
+    for (size_t i = 1; i < fielding.size(); ++i) {
+        const auto &r = fielding[i];
+        if (r.size() < 14) continue;
+        std::string team = trim(r[0]);
+        if (team.empty()) continue;
+        TeamStats &t = stats[team];
+        t.rag = parse_num(r[2]);
+        t.fld = parse_num(r[13]);
+    }
+
+    return stats;
+}
+
+// Emit a team's stats as a JS object literal (or "null" when unknown).
+static std::string stats_to_js(const std::unordered_map<std::string, TeamStats> &stats,
+                               const std::string &team) {
+    auto it = stats.find(team);
+    if (it == stats.end()) return "null";
+    const TeamStats &s = it->second;
+    auto num = [](double v) -> std::string {
+        if (std::isnan(v)) return "null";
+        char b[32];
+        std::snprintf(b, sizeof(b), "%.4f", v);
+        return std::string(b);
+    };
+    return "{rpg:" + num(s.rpg) + ",obp:" + num(s.obp) + ",slg:" + num(s.slg) +
+           ",hr:" + num(s.hr) + ",rag:" + num(s.rag) + ",fld:" + num(s.fld) + "}";
+}
 void write_html(const fs::path &out_path,
                 const std::vector<GamePrediction> &games,
-                const std::string &date_str) {
+                const std::string &date_str,
+                const std::unordered_map<std::string, TeamStats> &teamStats) {
 
     static const std::unordered_map<std::string,std::string> ABBR = {
         {"Arizona Diamondbacks","ari"},
@@ -155,6 +264,9 @@ h1 {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
     gap: 20px;
+    /* align-items: start keeps each card at its own height, so expanding one
+       card's details never stretches its row-mates into tall empty boxes. */
+    align-items: start;
 }
 
 .card {
@@ -162,6 +274,10 @@ h1 {
     border-radius: 16px;
     padding: 20px;
     box-shadow: 0 4px 15px rgba(0,0,0,0.3);
+    /* Flex column lets the details button pin to the bottom (margin-top:auto)
+       so every collapsed card lines its button up at the same baseline. */
+    display: flex;
+    flex-direction: column;
 }
 
 .teams {
@@ -184,6 +300,9 @@ h1 {
 .team-name {
     margin-top: 10px;
     font-weight: bold;
+    /* Reserve two lines so one- and two-line team names keep the logos,
+       percentages and winner line vertically aligned across every card. */
+    min-height: 2.6em;
 }
 
 .prob {
@@ -202,6 +321,71 @@ h1 {
     text-align: center;
     font-size: 18px;
     color: #60a5fa;
+    /* Reserve two lines for winners whose name wraps (e.g. "Washington
+       Nationals") so the button below stays aligned card-to-card. */
+    min-height: 2.6em;
+}
+
+.details-btn {
+    /* auto top-margin pushes the button to the bottom of the flex card. */
+    margin-top: auto;
+    width: 100%;
+    padding: 10px;
+    background: #334155;
+    color: #e2e8f0;
+    border: none;
+    border-radius: 10px;
+    font-size: 14px;
+    font-weight: bold;
+    cursor: pointer;
+    transition: background 0.15s ease;
+}
+
+.details-btn:hover {
+    background: #3e4c63;
+}
+
+.details {
+    margin-top: 14px;
+    border-top: 1px solid #334155;
+    padding-top: 10px;
+}
+
+.detail-row {
+    display: grid;
+    grid-template-columns: 1fr auto 1fr;
+    align-items: center;
+    gap: 10px;
+    padding: 6px 0;
+    font-size: 15px;
+}
+
+.detail-row .dl {
+    color: #94a3b8;
+    text-align: center;
+    font-size: 12px;
+    white-space: nowrap;
+}
+
+.detail-row .dv {
+    font-variant-numeric: tabular-nums;
+    color: #cbd5e1;
+    font-weight: bold;
+}
+
+.detail-row .dv.away { text-align: right; }
+.detail-row .dv.home { text-align: left; }
+
+/* Arrows sit inside a .dv and inherit its computed gradient colour. */
+.arrow {
+    font-weight: bold;
+}
+
+.details-unavailable {
+    color: #94a3b8;
+    text-align: center;
+    font-size: 13px;
+    padding: 6px 0;
 }
 
 </style>
@@ -227,7 +411,9 @@ const games = [
     awayP: )" << (g.away_prob * 100.0) << R"(,
     homeP: )" << (g.home_prob * 100.0) << R"(,
     awayLogo: ")" << logo_url(g.away) << R"(",
-    homeLogo: ")" << logo_url(g.home) << R"("
+    homeLogo: ")" << logo_url(g.home) << R"(",
+    awayStats: )" << stats_to_js(teamStats, g.away) << R"(,
+    homeStats: )" << stats_to_js(teamStats, g.home) << R"(
 },
 )";
     }
@@ -236,6 +422,76 @@ const games = [
 ];
 
 const container = document.getElementById("games");
+
+// Stats shown in the matchup detail panel.
+//   better: 'high' = larger value is superior, 'low' = smaller is superior.
+//   scale : the absolute gap that maps to a fully-saturated colour. Tuned per
+//           stat (their natural ranges differ by orders of magnitude) so a
+//           decisive edge in any stat reads as a strong colour while a marginal
+//           edge stays pale.
+const STAT_DEFS = [
+    { key: "rpg", label: "Runs / Game",          better: "high", dp: 2, scale: 1.5   },
+    { key: "obp", label: "On-Base %",            better: "high", dp: 3, scale: 0.030 },
+    { key: "slg", label: "Slugging %",           better: "high", dp: 3, scale: 0.060 },
+    { key: "hr",  label: "Home Runs",            better: "high", dp: 0, scale: 25    },
+    { key: "rag", label: "Runs Allowed / Game",  better: "low",  dp: 2, scale: 1.5   },
+    { key: "fld", label: "Fielding %",           better: "high", dp: 3, scale: 0.010 },
+];
+
+// Gradient endpoints: superior -> green, inferior -> red, ties/unknown -> grey.
+const C_NEUTRAL = [148, 163, 184];
+const C_BETTER  = [34, 197, 94];
+const C_WORSE   = [239, 68, 68];
+
+function isNum(v) {
+    return typeof v === "number" && !Number.isNaN(v);
+}
+
+function fmtStat(v, dp) {
+    return isNum(v) ? Number(v).toFixed(dp) : "—";
+}
+
+function mixRgb(from, to, t) {
+    const c = from.map((v, i) => Math.round(v + (to[i] - v) * t));
+    return `rgb(${c[0]}, ${c[1]}, ${c[2]})`;
+}
+
+// Colour one side's value relative to the other: green if it is the better
+// number, red if worse, with intensity scaled by how big the gap is.
+function gradeColor(def, self, other) {
+    if (!isNum(self) || !isNum(other) || self === other) return mixRgb(C_NEUTRAL, C_NEUTRAL, 0);
+    const t = Math.min(1, Math.abs(self - other) / def.scale);
+    const selfBetter = def.better === "high" ? self > other : self < other;
+    return mixRgb(C_NEUTRAL, selfBetter ? C_BETTER : C_WORSE, t);
+}
+
+function detailRow(def, av, hv) {
+    // winner: -1 away superior, 1 home superior, 0 tie/unknown.
+    let winner = 0;
+    if (isNum(av) && isNum(hv) && av !== hv) {
+        const homeBetter = def.better === "high" ? hv > av : hv < av;
+        winner = homeBetter ? 1 : -1;
+    }
+
+    const awayArrow = winner === -1 ? ` <span class="arrow">&#9664;</span>` : "";
+    const homeArrow = winner === 1  ? `<span class="arrow">&#9654;</span> ` : "";
+
+    return `
+        <div class="detail-row">
+            <div class="dv away" style="color:${gradeColor(def, av, hv)}">${fmtStat(av, def.dp)}${awayArrow}</div>
+            <div class="dl">${def.label}</div>
+            <div class="dv home" style="color:${gradeColor(def, hv, av)}">${homeArrow}${fmtStat(hv, def.dp)}</div>
+        </div>`;
+}
+
+function buildDetails(g) {
+    const a = g.awayStats, h = g.homeStats;
+    if (!a && !h) {
+        return `<div class="details-unavailable">Detailed stats unavailable for this matchup.</div>`;
+    }
+    return STAT_DEFS.map(def => detailRow(def, a ? a[def.key] : null,
+                                               h ? h[def.key] : null)).join("");
+}
 
 games.forEach(g => {
 
@@ -270,7 +526,19 @@ games.forEach(g => {
         <div class="favorite">
             Predicted Winner: ${favorite}
         </div>
+
+        <button class="details-btn" type="button">Matchup details &#9662;</button>
+        <div class="details" style="display:none">${buildDetails(g)}</div>
     `;
+
+    const btn = card.querySelector(".details-btn");
+    const panel = card.querySelector(".details");
+
+    btn.addEventListener("click", () => {
+        const isOpen = panel.style.display !== "none";
+        panel.style.display = isOpen ? "none" : "block";
+        btn.innerHTML = isOpen ? "Matchup details &#9662;" : "Hide details &#9652;";
+    });
 
     container.appendChild(card);
 
@@ -337,7 +605,8 @@ int main(int argc, char **argv) {
     ig.close();
 
     std::string date_str = "today";
-    write_html(outdir / "matchup_preview.html", games, date_str);
+    auto team_stats = load_team_stats();
+    write_html(outdir / "matchup_preview.html", games, date_str, team_stats);
 
     std::cout << "Generated social posts in " << outdir << "\n";
     return 0;

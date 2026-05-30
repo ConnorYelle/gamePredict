@@ -81,25 +81,17 @@ class PredictionPipeline:
         self.reports_dir.mkdir(parents=True, exist_ok=True)
         os.chdir(str(self.root_dir))
 
+        # statsCollector writes TeamStandardBatting.txt / TeamFielding.txt
+        # straight into today's data/rawData/<date>/ folder, and is idempotent
+        # (skips the API when today's files already exist), so reruns are cheap.
         result = self.run_command(
             [sys.executable, "scripts/statsCollector.py"],
             "Fetch team statistics",
             capture_output=False
         )
 
-        if result.returncode != 0:
-            self.log_step_end(1)
-            return False
-
-        csv_files = ['team_batting_stats.csv', 'team_pitching_stats.csv', 'team_fielding_stats.csv']
-        for csv_file in csv_files:
-            src = self.root_dir / csv_file
-            dst = self.stats_dir / csv_file
-            if src.exists():
-                src.replace(dst)
-
         self.log_step_end(1)
-        return True
+        return result.returncode == 0
 
     def step_2_fetch_games(self) -> bool:
         self.log_step_start(2, "FETCHING GAME SCHEDULE")

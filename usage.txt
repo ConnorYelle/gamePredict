@@ -60,7 +60,9 @@ INDIVIDUAL STEPS (normally run automatically)
 ------------------------------------------------------------
 
 python scripts/statsCollector.py
-    Downloads team batting, pitching, and fielding stats.
+    Downloads today's team batting/fielding stats from the MLB Stats API into
+    data/rawData/<date>/. Idempotent: if today's files already exist it skips
+    the API call. Add --force to refetch anyway.
 
 python scripts/scheduleFetcher.py
     Gets today's games and starting pitchers into outputs/games.txt.

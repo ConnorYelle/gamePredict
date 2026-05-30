@@ -46,6 +46,42 @@ class TeamModelStatsTests(unittest.TestCase):
         stats = api.team_model_stats(2025)
         self.assertEqual(stats[2]["runsPerGame"], 7.0)  # divided by fallback 1.0
 
+    def test_model_stats_only_exposes_model_fields(self):
+        api = make_api(self.responses)
+        stats = api.team_model_stats(2025)
+        self.assertNotIn("name", stats[1])
+        self.assertNotIn("homeRuns", stats[1])
+
+
+class TeamStandardStatsTests(unittest.TestCase):
+    def setUp(self):
+        self.responses = {
+            "group=hitting": stats_group([
+                {"team": {"id": 1, "name": "Boston Red Sox"},
+                 "stat": {"gamesPlayed": 10, "runs": 50, "avg": "0.265",
+                          "obp": "0.330", "slg": "0.450", "homeRuns": 22}},
+            ]),
+            "group=pitching": stats_group([
+                {"team": {"id": 1, "name": "Boston Red Sox"},
+                 "stat": {"gamesPlayed": 10, "runs": 40}},
+            ]),
+            "group=fielding": stats_group([
+                {"team": {"id": 1, "name": "Boston Red Sox"},
+                 "stat": {"fielding": "0.984"}},
+            ]),
+        }
+
+    def test_carries_name_hr_and_avg(self):
+        api = make_api(self.responses)
+        stats = api.team_standard_stats(2025)
+        t = stats[1]
+        self.assertEqual(t["name"], "Boston Red Sox")
+        self.assertEqual(t["homeRuns"], 22.0)
+        self.assertAlmostEqual(t["battingAvg"], 0.265)
+        self.assertAlmostEqual(t["runsPerGame"], 5.0)
+        self.assertAlmostEqual(t["runsAllowedPerGame"], 4.0)
+        self.assertAlmostEqual(t["fieldingPercentage"], 0.984)
+
 
 class SeasonGamesTests(unittest.TestCase):
     def _game(self, pk, home_id, away_id, hs, as_, state="Final",

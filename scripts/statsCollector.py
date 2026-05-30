@@ -1,80 +1,69 @@
 #!/usr/bin/env python3
-"""Advanced MLB statistics collector (CLI).
+"""Collect today's team season stats from the MLB Stats API (CLI).
 
-Fetches comprehensive batting/pitching/fielding analytics from
-baseball-reference.com and writes them to CSV, with a fallback to the most
-recent local data/rawData snapshot when scraping fails.
+Writes ``data/rawData/<mm-dd-yy>/TeamStandardBatting.txt`` and
+``TeamFielding.txt`` in the column layout the C++ predictor reads.
 
-CLI facade over :class:`mlb.scraper.BaseballReferenceScraper`.
+Idempotent by design: if today's stat files already exist, the API is NOT
+called again, so re-running the pipeline later in the day reuses what was
+already collected. Pass ``--force`` to refetch regardless.
+
+CLI facade over :class:`mlb.MlbStatsApi` + :mod:`mlb.raw_stats`.
 """
 
-import shutil
-from pathlib import Path
+import argparse
+from datetime import datetime
 
-from mlb.scraper import BaseballReferenceScraper
+from mlb import MlbStatsApi, config
+from mlb import raw_stats
 
 
-def _fallback_to_local_data():
-    """Copy the most recent local stats snapshot into place when scraping fails."""
-    print("No live stats fetched - attempting fallback to local data/rawData/...\n")
-    raw_root = Path('data') / 'rawData'
-    if not raw_root.exists():
-        print('data/rawData directory not present')
-        return
+def stats_dir_for(today):
+    """The data/rawData folder a given day's stats belong in."""
+    return config.ROOT / "data" / "rawData" / today.strftime("%m-%d-%y")
 
-    candidates = [p for p in raw_root.iterdir() if p.is_dir()]
-    if not candidates:
-        print('No dated folders found under data/rawData')
-        return
 
-    latest = max(candidates, key=lambda p: p.name)
-    print(f"Using existing stats from {latest}")
-    for fn in ['team_batting_stats.csv', 'team_pitching_stats.csv', 'team_fielding_stats.csv']:
-        src = latest / fn
-        if src.exists():
-            try:
-                shutil.copy(src, Path(fn))
-            except Exception as e:
-                print(f"Could not copy {src}: {e}")
+def collect_team_stats(api, today=None, force=False):
+    """Fetch and write today's team stat files.
+
+    Returns ``(out_dir, wrote)`` where ``wrote`` is False when the step was
+    skipped (already collected) or the API could not be reached.
+    """
+    today = today or datetime.now()
+    out_dir = stats_dir_for(today)
+
+    if not force and raw_stats.is_populated(out_dir):
+        print(f"Team stats already collected for {today:%Y-%m-%d}; "
+              f"skipping API call ({out_dir}).")
+        return out_dir, False
+
+    season = today.year
+    print(f"Fetching {season} team stats from the MLB Stats API...")
+    try:
+        teams = api.team_standard_stats(season)
+    except Exception as e:
+        print(f"Could not fetch team stats from MLB Stats API: {e}")
+        print("Predictor will fall back to the most recent local stats.")
+        return out_dir, False
+
+    rows = sorted((t for t in teams.values() if t.get("name")),
+                  key=lambda t: t["name"])
+    if not rows:
+        print("MLB Stats API returned no team stats; nothing written.")
+        return out_dir, False
+
+    batting, fielding = raw_stats.write_stat_files(rows, out_dir)
+    print(f"Wrote {len(rows)} teams' stats to {batting.name} / {fielding.name} "
+          f"in {out_dir}")
+    return out_dir, True
 
 
 def main():
-    collector = BaseballReferenceScraper()
-    year = 2026
-
-    print("\nCollecting batting statistics...")
-    batting_stats = collector.get_team_batting_stats(year)
-
-    print("Collecting pitching statistics...")
-    pitching_stats = collector.get_team_pitching_stats(year)
-
-    print("Collecting fielding statistics...")
-    fielding_stats = collector.get_team_fielding_stats(year)
-
-    if not batting_stats or not pitching_stats or not fielding_stats:
-        _fallback_to_local_data()
-
-    print("\nSaving statistics...")
-    collector.save_stats_to_csv(batting_stats, 'team_batting_stats.csv', 'batting')
-    collector.save_stats_to_csv(pitching_stats, 'team_pitching_stats.csv', 'pitching')
-    collector.save_stats_to_csv(fielding_stats, 'team_fielding_stats.csv', 'fielding')
-
-    print("Creating sample team comparison...")
-    if batting_stats and pitching_stats and fielding_stats:
-        teams = list(batting_stats.keys())[:2]
-        if len(teams) == 2:
-            comparison = collector.compile_team_comparison(
-                teams[0], teams[1],
-                batting_stats, pitching_stats, fielding_stats
-            )
-            collector.save_comparison_to_json(comparison, 'sample_matchup.json')
-
-    print("\nStatistics collection complete!")
-    print("Generated files:")
-    print("  - team_batting_stats.csv")
-    print("  - team_pitching_stats.csv")
-    print("  - team_fielding_stats.csv")
-    print("  - sample_matchup.json")
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--force", action="store_true",
+                        help="refetch even if today's stat files already exist")
+    args = parser.parse_args()
+    collect_team_stats(MlbStatsApi(), force=args.force)
 
 
 if __name__ == "__main__":

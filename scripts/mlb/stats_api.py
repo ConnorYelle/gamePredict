@@ -22,10 +22,18 @@ class MlbStatsApi:
     # ----------------------------------------------------------------- #
     # Team season stats (model inputs)
     # ----------------------------------------------------------------- #
-    def team_model_stats(self, season, use_cache=False):
-        """Return {team_id: {runsPerGame, onBasePercentage, sluggingPercentage,
-        runsAllowedPerGame, fieldingPercentage}} for the season."""
-        stats = {}
+    def team_standard_stats(self, season, use_cache=False):
+        """Return rich per-team season stats keyed by team id:
+        {id: {name, runsPerGame, battingAvg, onBasePercentage,
+              sluggingPercentage, homeRuns, runsAllowedPerGame,
+              fieldingPercentage}}.
+
+        This is the single fetch path for team season stats (one call each to
+        the hitting/pitching/fielding endpoints). It carries everything needed
+        both to feed the model (see :meth:`team_model_stats`) and to write the
+        predictor's TeamStandardBatting.txt / TeamFielding.txt files.
+        """
+        teams = {}
 
         hitting = self._get(
             f"{self.api}/teams/stats?season={season}&group=hitting"
@@ -33,10 +41,13 @@ class MlbStatsApi:
         for split in hitting["stats"][0]["splits"]:
             stat = split["stat"]
             games = to_float(stat.get("gamesPlayed")) or 1.0
-            stats[split["team"]["id"]] = {
+            teams[split["team"]["id"]] = {
+                "name": split["team"].get("name", ""),
                 "runsPerGame": to_float(stat.get("runs")) / games,
+                "battingAvg": to_float(stat.get("avg")),
                 "onBasePercentage": to_float(stat.get("obp")),
                 "sluggingPercentage": to_float(stat.get("slg")),
+                "homeRuns": to_float(stat.get("homeRuns")),
             }
 
         pitching = self._get(
@@ -45,17 +56,31 @@ class MlbStatsApi:
         for split in pitching["stats"][0]["splits"]:
             stat = split["stat"]
             games = to_float(stat.get("gamesPlayed")) or 1.0
-            stats.setdefault(split["team"]["id"], {})["runsAllowedPerGame"] = \
-                to_float(stat.get("runs")) / games
+            entry = teams.setdefault(split["team"]["id"], {})
+            entry.setdefault("name", split["team"].get("name", ""))
+            entry["runsAllowedPerGame"] = to_float(stat.get("runs")) / games
 
         fielding = self._get(
             f"{self.api}/teams/stats?season={season}&group=fielding"
             f"&stats=season&sportId=1", use_cache)
         for split in fielding["stats"][0]["splits"]:
-            stats.setdefault(split["team"]["id"], {})["fieldingPercentage"] = \
-                to_float(split["stat"].get("fielding"))
+            entry = teams.setdefault(split["team"]["id"], {})
+            entry.setdefault("name", split["team"].get("name", ""))
+            entry["fieldingPercentage"] = to_float(split["stat"].get("fielding"))
 
-        return stats
+        return teams
+
+    # Fields consumed by the win-probability model (see mlb.model).
+    _MODEL_FIELDS = ("runsPerGame", "onBasePercentage", "sluggingPercentage",
+                     "runsAllowedPerGame", "fieldingPercentage")
+
+    def team_model_stats(self, season, use_cache=False):
+        """Return {team_id: {runsPerGame, onBasePercentage, sluggingPercentage,
+        runsAllowedPerGame, fieldingPercentage}} for the season -- the subset of
+        :meth:`team_standard_stats` the model actually consumes."""
+        full = self.team_standard_stats(season, use_cache=use_cache)
+        return {tid: {k: s[k] for k in self._MODEL_FIELDS if k in s}
+                for tid, s in full.items()}
 
     # ----------------------------------------------------------------- #
     # Game results / schedule (with starters)

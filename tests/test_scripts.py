@@ -9,10 +9,12 @@ import tempfile
 import unittest
 from datetime import datetime
 from pathlib import Path
+from unittest import mock
 
 import collect_pitchers
 import scheduleFetcher
 import statsCollector
+from mlb import config, raw_stats
 
 
 class FakeScheduleApi:
@@ -89,28 +91,66 @@ class CollectPitchersTests(unittest.TestCase):
         self.assertEqual(rows, [])
 
 
-class StatsCollectorFallbackTests(unittest.TestCase):
-    def test_fallback_copies_latest_snapshot(self):
-        with tempfile.TemporaryDirectory() as d:
-            cwd = os.getcwd()
-            os.chdir(d)
-            try:
-                snap = Path(d) / "data" / "rawData" / "05-29-26"
-                snap.mkdir(parents=True)
-                (snap / "team_batting_stats.csv").write_text("x", encoding="utf-8")
-                statsCollector._fallback_to_local_data()
-                self.assertTrue((Path(d) / "team_batting_stats.csv").exists())
-            finally:
-                os.chdir(cwd)
+class FakeStandardApi:
+    """team_standard_stats stand-in that counts how often it is called."""
 
-    def test_fallback_no_rawdata_is_graceful(self):
-        with tempfile.TemporaryDirectory() as d:
-            cwd = os.getcwd()
-            os.chdir(d)
-            try:
-                statsCollector._fallback_to_local_data()  # must not raise
-            finally:
-                os.chdir(cwd)
+    def __init__(self, teams=None, raises=None):
+        self.teams = teams if teams is not None else {
+            10: {"name": "Boston Red Sox", "runsPerGame": 4.5, "battingAvg": 0.265,
+                 "onBasePercentage": 0.330, "sluggingPercentage": 0.430,
+                 "homeRuns": 60, "runsAllowedPerGame": 4.0, "fieldingPercentage": 0.985},
+            20: {"name": "New York Yankees", "runsPerGame": 5.1, "battingAvg": 0.255,
+                 "onBasePercentage": 0.322, "sluggingPercentage": 0.445,
+                 "homeRuns": 71, "runsAllowedPerGame": 3.8, "fieldingPercentage": 0.982},
+        }
+        self.raises = raises
+        self.calls = 0
+
+    def team_standard_stats(self, season, use_cache=False):
+        self.calls += 1
+        if self.raises:
+            raise self.raises
+        return self.teams
+
+
+class StatsCollectorTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        # Redirect config.ROOT so writes land in the temp tree, not the repo.
+        self.patch = mock.patch.object(config, "ROOT", Path(self.tmp.name))
+        self.patch.start()
+        self.today = datetime(2026, 5, 30)
+
+    def tearDown(self):
+        self.patch.stop()
+        self.tmp.cleanup()
+
+    def test_writes_files_when_absent(self):
+        api = FakeStandardApi()
+        out_dir, wrote = statsCollector.collect_team_stats(api, self.today)
+        self.assertTrue(wrote)
+        self.assertTrue(raw_stats.is_populated(out_dir))
+        self.assertEqual(api.calls, 1)
+
+    def test_skips_when_already_collected(self):
+        api = FakeStandardApi()
+        statsCollector.collect_team_stats(api, self.today)        # first run writes
+        out_dir, wrote = statsCollector.collect_team_stats(api, self.today)
+        self.assertFalse(wrote)
+        self.assertEqual(api.calls, 1)  # second run did NOT hit the API
+
+    def test_force_refetches(self):
+        api = FakeStandardApi()
+        statsCollector.collect_team_stats(api, self.today)
+        _, wrote = statsCollector.collect_team_stats(api, self.today, force=True)
+        self.assertTrue(wrote)
+        self.assertEqual(api.calls, 2)
+
+    def test_api_error_is_graceful(self):
+        api = FakeStandardApi(raises=RuntimeError("network down"))
+        out_dir, wrote = statsCollector.collect_team_stats(api, self.today)
+        self.assertFalse(wrote)
+        self.assertFalse(raw_stats.is_populated(out_dir))  # nothing written
 
 
 if __name__ == "__main__":
