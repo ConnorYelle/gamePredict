@@ -19,6 +19,7 @@ struct Pitcher {
     double whip = -1.0;
     double k9 = -1.0;         // strikeouts per 9 innings
     double recentEra = -1.0;  // ERA over the last few starts (recent form)
+    double fip = -1.0;        // Fielding Independent Pitching (less noisy than ERA)
 };
 
 class GamePredictor {
@@ -32,19 +33,39 @@ private:
     double sluggingPercentageWeight = 30.0;
     double offenseWeight = 0.6;
     double defenseWeight = 0.4;
-    double homeFieldAdvantage = 1.05;
 
-    // Starting-pitcher weights (0 by default => pitcher has no effect until tuned)
+    // Probability mapping: logistic on the home-vs-away strength difference.
+    // probScale is the logistic slope; homeFieldLogit is the additive home edge
+    // in log-odds. This calibrated mapping is what the Brier score rewards.
+    double probScale = 0.1;
+    double homeFieldLogit = 0.15;
+
+    // Starting-pitcher weights (0 by default => no effect until tuned).
     double pitcherEraWeight = 0.0;
     double pitcherWhipWeight = 0.0;
     double pitcherK9Weight = 0.0;
     double pitcherRecentFormWeight = 0.0;
+    double pitcherFipWeight = 0.0;
+
+    // Bullpen weights.
+    double bullpenEraWeight = 0.0;
+    double bullpenKbbWeight = 0.0;
+
+    // Park-factor weight: how much of the home park's (run index - 1) swing the
+    // model applies to both offenses.
+    double parkFactorWeight = 0.0;
 
     // Helper to normalize team names (handle abbreviations, spacing)
     std::string normalizeTeamName(const std::string& name);
 
     // Contribution of a starting pitcher to a team's strength.
     double pitcherScore(const Pitcher* pitcher) const;
+
+    // Contribution of a team's bullpen to its strength.
+    double bullpenScore(const Team& team) const;
+
+    // Home park run index (1.0 = neutral / unknown) keyed by full team name.
+    double parkFactor(const std::string& teamName) const;
 
 public:
     void loadConfig(const std::string& configPath);

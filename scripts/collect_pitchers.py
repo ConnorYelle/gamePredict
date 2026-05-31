@@ -2,10 +2,11 @@
 """Collect today's probable starting pitchers and their stats.
 
 Writes data/rawData/<mm-dd-yy>/StartingPitchers.csv with columns:
-    name,era,whip,k9,recentEra
+    name,era,whip,k9,recentEra,fip
 which the C++ predictor loads alongside the team CSVs. ``recentEra`` is the ERA
-over the pitcher's most recent starts (recent form). Blank values mean unknown
-and are ignored by the model.
+over the pitcher's most recent starts (recent form); ``fip`` is Fielding
+Independent Pitching (a less noisy talent estimate than ERA). Blank values mean
+unknown and are ignored by the model.
 
 CLI facade over :class:`mlb.MlbStatsApi`.
 """
@@ -43,6 +44,7 @@ def collect_starting_pitchers(api, today=None):
             "whip": _fmt(season_stats.get("whip")),
             "k9": _fmt(season_stats.get("k9")),
             "recentEra": _fmt(api.recent_era(pid, season)),
+            "fip": _fmt(season_stats.get("fip")),
         })
     return rows
 
@@ -55,7 +57,8 @@ def main():
     out_dir.mkdir(parents=True, exist_ok=True)
     out_path = out_dir / "StartingPitchers.csv"
     with out_path.open("w", newline="", encoding="utf-8") as f:
-        writer = csv.DictWriter(f, fieldnames=["name", "era", "whip", "k9", "recentEra"])
+        writer = csv.DictWriter(
+            f, fieldnames=["name", "era", "whip", "k9", "recentEra", "fip"])
         writer.writeheader()
         writer.writerows(rows)
 

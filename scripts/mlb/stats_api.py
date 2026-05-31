@@ -34,6 +34,7 @@ class MlbStatsApi:
         predictor's TeamStandardBatting.txt / TeamFielding.txt files.
         """
         teams = {}
+        games_by_team = {}
 
         hitting = self._get(
             f"{self.api}/teams/stats?season={season}&group=hitting"
@@ -41,7 +42,9 @@ class MlbStatsApi:
         for split in hitting["stats"][0]["splits"]:
             stat = split["stat"]
             games = to_float(stat.get("gamesPlayed")) or 1.0
-            teams[split["team"]["id"]] = {
+            tid = split["team"]["id"]
+            games_by_team[tid] = games
+            teams[tid] = {
                 "name": split["team"].get("name", ""),
                 "runsPerGame": to_float(stat.get("runs")) / games,
                 "battingAvg": to_float(stat.get("avg")),
@@ -56,7 +59,9 @@ class MlbStatsApi:
         for split in pitching["stats"][0]["splits"]:
             stat = split["stat"]
             games = to_float(stat.get("gamesPlayed")) or 1.0
-            entry = teams.setdefault(split["team"]["id"], {})
+            tid = split["team"]["id"]
+            games_by_team.setdefault(tid, games)
+            entry = teams.setdefault(tid, {})
             entry.setdefault("name", split["team"].get("name", ""))
             entry["runsAllowedPerGame"] = to_float(stat.get("runs")) / games
 
@@ -68,11 +73,46 @@ class MlbStatsApi:
             entry.setdefault("name", split["team"].get("name", ""))
             entry["fieldingPercentage"] = to_float(split["stat"].get("fielding"))
 
+        self._regress_rate_stats(teams, games_by_team)
+
+        for entry in teams.values():
+            entry["parkFactor"] = config.PARK_FACTORS.get(entry.get("name", ""), 1.0)
+
+        for tid, bp in self.team_bullpen_stats(season, use_cache=use_cache).items():
+            if tid in teams:
+                teams[tid].update(bp)
+
         return teams
+
+    # Rate stats shrunk toward the league mean to tame small samples.
+    _REGRESSED_FIELDS = ("runsPerGame", "onBasePercentage",
+                         "sluggingPercentage", "runsAllowedPerGame")
+
+    @staticmethod
+    def _regress_rate_stats(teams, games_by_team, k=None):
+        """Shrink each team's rate stats toward the league mean, weighting the
+        team's own value by its games played and the mean by ``k`` games. This
+        is the cheap, untrained calibration win: early in a season the league
+        spread is mostly noise, so regressing toward the mean lowers the Brier
+        score without touching any weight."""
+        k = config.REGRESSION_GAMES if k is None else k
+        if k <= 0 or not teams:
+            return
+        for field in MlbStatsApi._REGRESSED_FIELDS:
+            vals = [t[field] for t in teams.values() if field in t]
+            if not vals:
+                continue
+            mean = sum(vals) / len(vals)
+            for tid, t in teams.items():
+                if field not in t:
+                    continue
+                g = games_by_team.get(tid, 1.0)
+                t[field] = (t[field] * g + mean * k) / (g + k)
 
     # Fields consumed by the win-probability model (see mlb.model).
     _MODEL_FIELDS = ("runsPerGame", "onBasePercentage", "sluggingPercentage",
-                     "runsAllowedPerGame", "fieldingPercentage")
+                     "runsAllowedPerGame", "fieldingPercentage",
+                     "parkFactor", "bullpenEra", "bullpenKbb")
 
     def team_model_stats(self, season, use_cache=False):
         """Return {team_id: {runsPerGame, onBasePercentage, sluggingPercentage,
@@ -198,8 +238,27 @@ class MlbStatsApi:
     # ----------------------------------------------------------------- #
     # Pitcher stats
     # ----------------------------------------------------------------- #
+    # FIP constant: roughly centers league FIP on league ERA.
+    _FIP_CONSTANT = 3.10
+
+    @classmethod
+    def _fip(cls, stat):
+        """Fielding Independent Pitching from a season stat object, or -1.0 when
+        the components are unavailable. FIP isolates the outcomes a pitcher
+        controls (K, BB, HBP, HR) and is far less noisy than ERA, which is why
+        the model can lean on it more confidently than on raw ERA."""
+        ip = ip_to_float(stat.get("inningsPitched"))
+        if ip <= 0:
+            return -1.0
+        hr = to_float(stat.get("homeRuns"))
+        bb = to_float(stat.get("baseOnBalls"))
+        hbp = to_float(stat.get("hitByPitch"))
+        k = to_float(stat.get("strikeOuts"))
+        return (13.0 * hr + 3.0 * (bb + hbp) - 2.0 * k) / ip + cls._FIP_CONSTANT
+
     def pitcher_season_stats(self, pid, season, use_cache=False):
-        """Return {era, whip, k9} for a pitcher's season, or None if unavailable."""
+        """Return {era, whip, k9, fip} for a pitcher's season, or None if
+        unavailable. Any individual stat is -1.0 when it cannot be computed."""
         if not pid:
             return None
         data = self._get(
@@ -213,7 +272,40 @@ class MlbStatsApi:
             "era": to_float(stat.get("era"), -1.0),
             "whip": to_float(stat.get("whip"), -1.0),
             "k9": to_float(stat.get("strikeoutsPer9Inn"), -1.0),
+            "fip": self._fip(stat),
         }
+
+    # ----------------------------------------------------------------- #
+    # Bullpen (relief-pitching split)
+    # ----------------------------------------------------------------- #
+    def team_bullpen_stats(self, season, use_cache=False):
+        """Return {team_id: {bullpenEra, bullpenKbb}} from the relief-pitching
+        split. The starter throws ~5 innings; the bullpen covers the rest and is
+        one of the largest single-game swing factors, yet season RA/G blurs it
+        into the staff total. Best-effort: any failure or shape mismatch yields
+        an empty dict so the rest of the pipeline degrades gracefully."""
+        try:
+            data = self._get(
+                f"{self.api}/teams/stats?stats=statSplits&group=pitching"
+                f"&season={season}&sportId=1&sitCodes=rp", use_cache)
+            splits = (data.get("stats") or [{}])[0].get("splits", [])
+        except Exception:
+            return {}
+
+        result = {}
+        for split in splits:
+            team = split.get("team") or {}
+            tid = team.get("id")
+            if tid is None:
+                continue
+            stat = split.get("stat", {})
+            k9 = to_float(stat.get("strikeoutsPer9Inn"), -1.0)
+            bb9 = to_float(stat.get("walksPer9Inn"), -1.0)
+            result[tid] = {
+                "bullpenEra": to_float(stat.get("era"), -1.0),
+                "bullpenKbb": (k9 - bb9) if (k9 >= 0 and bb9 >= 0) else -1.0,
+            }
+        return result
 
     def pitcher_game_log(self, pid, season, use_cache=False):
         """Return a pitcher's starts as [{date, er, ip}] sorted ascending by date."""

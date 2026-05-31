@@ -4,7 +4,16 @@
 with a set of weights and call ``home_win_probability``. Keeping the formula
 identical to the C++ engine is what lets the trainer and backtester reason about
 the same model the production predictor runs.
+
+The model builds an additive "strength" for each side (offense + defense +
+starting pitcher + bullpen) and maps the home-minus-away *difference* through a
+logistic. Mapping a difference through a logistic -- rather than taking a ratio
+of strengths -- is what makes the output a calibrated probability, which is what
+the Brier score rewards. ``probScale`` is the logistic slope and
+``homeFieldLogit`` is the additive home-field edge in log-odds.
 """
+
+import math
 
 
 class PredictionModel:
@@ -12,7 +21,8 @@ class PredictionModel:
         self.w = weights
 
     def pitcher_score(self, p):
-        """``p`` is {era, whip, k9, recentEra} (or None). Missing values are < 0."""
+        """``p`` is {era, whip, k9, recentEra, fip} (or None). Missing values
+        are < 0 and contribute nothing."""
         if not p:
             return 0.0
         w = self.w
@@ -25,30 +35,58 @@ class PredictionModel:
             score += p["k9"] * w["pitcherK9Weight"]
         if p.get("recentEra", -1) >= 0:
             score += (1.0 / (p["recentEra"] + 0.1)) * w["pitcherRecentFormWeight"]
+        if p.get("fip", -1) >= 0:
+            score += (1.0 / (p["fip"] + 0.1)) * w["pitcherFipWeight"]
         return score
+
+    def bullpen_score(self, t):
+        """Relief-pitching contribution from a team's bullpen split. Uses the
+        same -1 = "unknown" sentinel convention as the starter stats, so a team
+        without a fetched bullpen split simply contributes nothing."""
+        w = self.w
+        score = 0.0
+        if t.get("bullpenEra", -1) >= 0:
+            score += (1.0 / (t["bullpenEra"] + 0.1)) * w["bullpenEraWeight"]
+        if t.get("bullpenKbb", -1) >= 0:
+            score += t["bullpenKbb"] * w["bullpenKbbWeight"]
+        return score
+
+    def _park_mult(self, home):
+        """Multiplier applied to *both* offenses, derived from the home park's
+        run index. ``parkFactorWeight`` interpolates how much of the (factor - 1)
+        swing is applied (0 => parks ignored)."""
+        pf = home.get("parkFactor", 1.0)
+        return 1.0 + (pf - 1.0) * self.w.get("parkFactorWeight", 0.0)
 
     def home_win_probability(self, home, away, home_sp, away_sp):
         """Win probability for the home team. ``home``/``away`` are team-stat
         dicts; ``home_sp``/``away_sp`` are pitcher dicts (or None)."""
         w = self.w
+        park = self._park_mult(home)
 
         def offense(t):
-            return (t.get("runsPerGame", 0.0) * w["runsPerGameWeight"]
-                    + t.get("onBasePercentage", 0.0) * w["onBasePercentageWeight"]
-                    + t.get("sluggingPercentage", 0.0) * w["sluggingPercentageWeight"])
+            return ((t.get("runsPerGame", 0.0) * w["runsPerGameWeight"]
+                     + t.get("onBasePercentage", 0.0) * w["onBasePercentageWeight"]
+                     + t.get("sluggingPercentage", 0.0) * w["sluggingPercentageWeight"])
+                    * park)
 
         def defense(t):
             return (1.0 / (t.get("runsAllowedPerGame", 0.0) + 0.1)) \
                 * t.get("fieldingPercentage", 0.0) * 100
 
-        home_strength = (offense(home) * w["offenseWeight"]
-                         + defense(home) * w["defenseWeight"]
-                         + self.pitcher_score(home_sp)) * w["homeFieldAdvantage"]
-        away_strength = (offense(away) * w["offenseWeight"]
-                         + defense(away) * w["defenseWeight"]
-                         + self.pitcher_score(away_sp))
+        def strength(t, sp):
+            return (offense(t) * w["offenseWeight"]
+                    + defense(t) * w["defenseWeight"]
+                    + self.pitcher_score(sp)
+                    + self.bullpen_score(t))
 
-        total = home_strength + away_strength
-        if total == 0:
+        home_strength = strength(home, home_sp)
+        away_strength = strength(away, away_sp)
+
+        # No data on either side -> coin flip (keeps the degenerate case clean).
+        if home_strength + away_strength == 0:
             return 0.5
-        return min(0.99, max(0.01, home_strength / total))
+
+        logit = w["probScale"] * (home_strength - away_strength) + w["homeFieldLogit"]
+        p = 1.0 / (1.0 + math.exp(-logit))
+        return min(0.99, max(0.01, p))

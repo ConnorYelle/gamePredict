@@ -195,7 +195,18 @@ class PitcherStatsTests(unittest.TestCase):
                                          "strikeoutsPer9Inn": "9.8"}}])
         api = make_api({"stats=season": payload})
         stats = api.pitcher_season_stats(123, 2025)
-        self.assertEqual(stats, {"era": 2.50, "whip": 1.05, "k9": 9.8})
+        # No innings pitched in the payload -> FIP unavailable (-1.0).
+        self.assertEqual(stats, {"era": 2.50, "whip": 1.05, "k9": 9.8, "fip": -1.0})
+
+    def test_season_stats_computes_fip(self):
+        payload = stats_group([{"stat": {
+            "era": "3.00", "whip": "1.10", "strikeoutsPer9Inn": "9.0",
+            "inningsPitched": "100.0", "homeRuns": 10,
+            "baseOnBalls": 30, "hitByPitch": 5, "strikeOuts": 100}}])
+        api = make_api({"stats=season": payload})
+        fip = api.pitcher_season_stats(7, 2025)["fip"]
+        expected = (13 * 10 + 3 * (30 + 5) - 2 * 100) / 100.0 + 3.10
+        self.assertAlmostEqual(fip, expected, places=9)
 
     def test_season_stats_none_pid(self):
         self.assertIsNone(make_api({}).pitcher_season_stats(None, 2025))

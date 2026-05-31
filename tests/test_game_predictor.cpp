@@ -174,7 +174,8 @@ static void testLoadConfig(TestRunner& tr, const fs::path& dir) {
         "sluggingPercentageWeight": 30.0,
         "offenseWeight": 0.6,
         "defenseWeight": 0.4,
-        "homeFieldAdvantage": 100.0,
+        "probScale": 0.1,
+        "homeFieldLogit": 100.0,
         "pitcherEraWeight": 0.0,
         "pitcherWhipWeight": 0.0,
         "pitcherK9Weight": 0.0,
@@ -187,7 +188,7 @@ static void testLoadConfig(TestRunner& tr, const fs::path& dir) {
     Team a = makeTeam("Home", 4.5, 0.320, 0.410, 4.0, 0.985);
     Team b = makeTeam("Away", 4.5, 0.320, 0.410, 4.0, 0.985);
     double p = predictor.predictWinProbability(a, b);
-    tr.check(p > 0.98, "huge home-field advantage pushes prob toward ceiling");
+    tr.check(p > 0.98, "huge home-field logit pushes prob toward ceiling");
 
     GamePredictor missing;
     missing.loadConfig((dir / "no_such_config.json").string());

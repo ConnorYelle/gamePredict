@@ -4,6 +4,7 @@ These pin the exact arithmetic so the Python model stays a faithful port of
 cpp/GamePredictor.cpp (the trainer/backtester rely on that parity).
 """
 
+import math
 import unittest
 
 from mlb import config
@@ -66,12 +67,12 @@ class HomeWinProbabilityTests(unittest.TestCase):
         self.assertTrue(0.0 < p_home < 1.0)
 
     def test_exact_value_for_identical_teams(self):
+        # Identical strengths -> the difference is 0, so the logit is just the
+        # home-field edge and the probability is sigmoid(homeFieldLogit).
         p = self.model.home_win_probability(TEAM, TEAM, None, None)
-        offense = 4.5 * 0.4 + 0.320 * 50 + 0.410 * 30
-        defense = (1.0 / (4.0 + 0.1)) * 0.985 * 100
-        home = (offense * 0.6 + defense * 0.4) * 1.05
-        away = (offense * 0.6 + defense * 0.4)
-        self.assertAlmostEqual(p, home / (home + away), places=9)
+        w = config.DEFAULT_WEIGHTS
+        expected = 1.0 / (1.0 + math.exp(-w["homeFieldLogit"]))
+        self.assertAlmostEqual(p, expected, places=9)
 
     def test_zero_strength_returns_half(self):
         empty = {}

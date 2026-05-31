@@ -39,16 +39,29 @@ void GamePredictor::loadConfig(const std::string& configPath) {
     buffer << configFile.rdbuf();
     std::string configJson = buffer.str();
     
-    runsPerGameWeight = extractJsonDouble(configJson, "runsPerGameWeight");
-    onBasePercentageWeight = extractJsonDouble(configJson, "onBasePercentageWeight");
-    sluggingPercentageWeight = extractJsonDouble(configJson, "sluggingPercentageWeight");
-    offenseWeight = extractJsonDouble(configJson, "offenseWeight");
-    defenseWeight = extractJsonDouble(configJson, "defenseWeight");
-    homeFieldAdvantage = extractJsonDouble(configJson, "homeFieldAdvantage");
-    pitcherEraWeight = extractJsonDouble(configJson, "pitcherEraWeight");
-    pitcherWhipWeight = extractJsonDouble(configJson, "pitcherWhipWeight");
-    pitcherK9Weight = extractJsonDouble(configJson, "pitcherK9Weight");
-    pitcherRecentFormWeight = extractJsonDouble(configJson, "pitcherRecentFormWeight");
+    // Only overwrite a default when the key is actually present, so a partial
+    // config still benefits from the built-in defaults for missing keys.
+    auto load = [&](const std::string& key, double& target) {
+        if (configJson.find("\"" + key + "\"") != std::string::npos) {
+            target = extractJsonDouble(configJson, key);
+        }
+    };
+
+    load("runsPerGameWeight", runsPerGameWeight);
+    load("onBasePercentageWeight", onBasePercentageWeight);
+    load("sluggingPercentageWeight", sluggingPercentageWeight);
+    load("offenseWeight", offenseWeight);
+    load("defenseWeight", defenseWeight);
+    load("probScale", probScale);
+    load("homeFieldLogit", homeFieldLogit);
+    load("pitcherEraWeight", pitcherEraWeight);
+    load("pitcherWhipWeight", pitcherWhipWeight);
+    load("pitcherK9Weight", pitcherK9Weight);
+    load("pitcherRecentFormWeight", pitcherRecentFormWeight);
+    load("pitcherFipWeight", pitcherFipWeight);
+    load("bullpenEraWeight", bullpenEraWeight);
+    load("bullpenKbbWeight", bullpenKbbWeight);
+    load("parkFactorWeight", parkFactorWeight);
 }
 
 std::string GamePredictor::normalizeTeamName(const std::string& name) {
@@ -175,6 +188,25 @@ void GamePredictor::loadAllStats(const std::string& baseDataPath) {
             if (row.size() > 2) p.whip = parseStat(row[2]);
             if (row.size() > 3) p.k9 = parseStat(row[3]);
             if (row.size() > 4) p.recentEra = parseStat(row[4]);
+            if (row.size() > 5) p.fip = parseStat(row[5]);
+        }
+    }
+
+    // Load bullpen split (optional). Format: name,era,kbb. Blank => -1 ("unknown").
+    auto bullpenData = CSVReader::readCSV(baseDataPath + "/TeamBullpen.csv");
+    if (bullpenData.size() > 1) {
+        for (size_t i = 1; i < bullpenData.size(); i++) { // Skip header
+            auto& row = bullpenData[i];
+            if (row.size() < 2) continue;
+
+            std::string teamName = normalizeTeamName(row[0]);
+            if (teamName.empty()) continue;
+            if (teams.find(teamName) == teams.end()) {
+                teams[teamName].name = teamName;
+            }
+            Team& team = teams[teamName];
+            team.bullpenEra = parseStat(row[1]);
+            if (row.size() > 2) team.bullpenKbb = parseStat(row[2]);
         }
     }
 }
@@ -188,37 +220,71 @@ double GamePredictor::pitcherScore(const Pitcher* pitcher) const {
     if (pitcher->whip >= 0.0) score += (1.0 / (pitcher->whip + 0.1)) * pitcherWhipWeight;
     if (pitcher->k9 >= 0.0) score += pitcher->k9 * pitcherK9Weight;
     if (pitcher->recentEra >= 0.0) score += (1.0 / (pitcher->recentEra + 0.1)) * pitcherRecentFormWeight;
+    if (pitcher->fip >= 0.0) score += (1.0 / (pitcher->fip + 0.1)) * pitcherFipWeight;
     return score;
+}
+
+double GamePredictor::bullpenScore(const Team& team) const {
+    double score = 0.0;
+    // Lower bullpen ERA is better -> invert. Net K-BB higher is better -> direct.
+    if (team.bullpenEra >= 0.0) score += (1.0 / (team.bullpenEra + 0.1)) * bullpenEraWeight;
+    if (team.bullpenKbb >= 0.0) score += team.bullpenKbb * bullpenKbbWeight;
+    return score;
+}
+
+double GamePredictor::parkFactor(const std::string& teamName) const {
+    // Static park run-index priors (1.0 = neutral). MUST stay in sync with
+    // PARK_FACTORS in scripts/mlb/config.py.
+    static const std::map<std::string, double> parkFactors = {
+        {"Colorado Rockies", 1.15}, {"Cincinnati Reds", 1.07},
+        {"Boston Red Sox", 1.05}, {"Arizona Diamondbacks", 1.03},
+        {"Kansas City Royals", 1.02}, {"Chicago Cubs", 1.02},
+        {"Texas Rangers", 1.02}, {"Baltimore Orioles", 1.02},
+        {"Philadelphia Phillies", 1.02}, {"Toronto Blue Jays", 1.02},
+        {"Atlanta Braves", 1.01}, {"Washington Nationals", 1.01},
+        {"Chicago White Sox", 1.01}, {"New York Yankees", 1.01},
+        {"Los Angeles Angels", 1.00}, {"Houston Astros", 1.00},
+        {"Minnesota Twins", 1.00}, {"Milwaukee Brewers", 1.00},
+        {"St. Louis Cardinals", 0.99}, {"Pittsburgh Pirates", 0.99},
+        {"Los Angeles Dodgers", 0.99}, {"Cleveland Guardians", 0.98},
+        {"New York Mets", 0.98}, {"Detroit Tigers", 0.98},
+        {"Tampa Bay Rays", 0.97}, {"Miami Marlins", 0.97},
+        {"Athletics", 0.97}, {"San Diego Padres", 0.96},
+        {"San Francisco Giants", 0.96}, {"Seattle Mariners", 0.95},
+    };
+    auto it = parkFactors.find(teamName);
+    return it != parkFactors.end() ? it->second : 1.0;
 }
 
 double GamePredictor::predictWinProbability(const Team& homeTeam, const Team& awayTeam,
                                             const Pitcher* homeStarter,
                                             const Pitcher* awayStarter) {
-    // Calculate offensive strength (higher is better)
-    double homeOffense = (homeTeam.runsPerGame * runsPerGameWeight) +
-                         (homeTeam.onBasePercentage * onBasePercentageWeight) +
-                         (homeTeam.sluggingPercentage * sluggingPercentageWeight);
-    double awayOffense = (awayTeam.runsPerGame * runsPerGameWeight) +
-                         (awayTeam.onBasePercentage * onBasePercentageWeight) +
-                         (awayTeam.sluggingPercentage * sluggingPercentageWeight);
+    // The home park's run index swings both lineups; parkFactorWeight scales how
+    // much of the (factor - 1) swing is applied (0 => parks ignored).
+    double park = 1.0 + (parkFactor(homeTeam.name) - 1.0) * parkFactorWeight;
 
-    // Calculate defensive strength (lower RA/G is better, higher Fld% is better)
-    double homeDefense = (1.0 / (homeTeam.runsAllowedPerGame + 0.1)) * homeTeam.fieldingPercentage * 100;
-    double awayDefense = (1.0 / (awayTeam.runsAllowedPerGame + 0.1)) * awayTeam.fieldingPercentage * 100;
+    auto offense = [&](const Team& t) {
+        return ((t.runsPerGame * runsPerGameWeight) +
+                (t.onBasePercentage * onBasePercentageWeight) +
+                (t.sluggingPercentage * sluggingPercentageWeight)) * park;
+    };
+    // Defensive strength: lower RA/G is better, higher Fld% is better.
+    auto defense = [](const Team& t) {
+        return (1.0 / (t.runsAllowedPerGame + 0.1)) * t.fieldingPercentage * 100;
+    };
 
-    // Starting pitcher contribution (0 when the starter is unknown or untuned)
-    double homePitching = pitcherScore(homeStarter);
-    double awayPitching = pitcherScore(awayStarter);
+    double homeStrength = offense(homeTeam) * offenseWeight + defense(homeTeam) * defenseWeight
+                          + pitcherScore(homeStarter) + bullpenScore(homeTeam);
+    double awayStrength = offense(awayTeam) * offenseWeight + defense(awayTeam) * defenseWeight
+                          + pitcherScore(awayStarter) + bullpenScore(awayTeam);
 
-    // Combined team strength (home field advantage applied)
-    double homeStrength = (homeOffense * offenseWeight + homeDefense * defenseWeight + homePitching) * homeFieldAdvantage;
-    double awayStrength = (awayOffense * offenseWeight + awayDefense * defenseWeight + awayPitching);
+    // No data on either side -> coin flip.
+    if (homeStrength + awayStrength == 0) return 0.5;
 
-    // Calculate win probability using logistic function
-    double totalStrength = homeStrength + awayStrength;
-    if (totalStrength == 0) return 0.5;
-
-    double winProbability = homeStrength / totalStrength;
+    // Map the strength *difference* through a logistic for a calibrated
+    // probability (homeFieldLogit is the additive home edge in log-odds).
+    double logit = probScale * (homeStrength - awayStrength) + homeFieldLogit;
+    double winProbability = 1.0 / (1.0 + std::exp(-logit));
     return std::min(0.99, std::max(0.01, winProbability));
 }
 

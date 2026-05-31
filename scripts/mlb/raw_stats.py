@@ -33,9 +33,23 @@ _FILLER_NAMES = ("League Average", "League Totals")
 BATTING_FILE = "TeamStandardBatting.txt"
 FIELDING_FILE = "TeamFielding.txt"
 
+# Bullpen split, read by GamePredictor::loadAllStats. Header + one row per team
+# (no filler rows: the C++ bullpen loader reads every data row). Blank cells mean
+# "unknown" and are skipped in scoring, matching StartingPitchers.csv.
+BULLPEN_FILE = "TeamBullpen.csv"
+BULLPEN_HEADER = ["name", "era", "kbb"]
+
 
 def _blank_row(width):
     return ["0"] * width
+
+
+def _stat_or_blank(value):
+    """Format a stat for CSV: blank when unknown (None or negative sentinel)."""
+    if value is None:
+        return ""
+    value = float(value)
+    return "" if value < 0 else f"{value:.3f}"
 
 
 def batting_rows(teams):
@@ -80,23 +94,43 @@ def fielding_rows(teams):
     return rows
 
 
+def bullpen_rows(teams):
+    """Build header + per-team rows for TeamBullpen.csv.
+
+    Uses bullpenEra/bullpenKbb (missing or negative values written blank).
+    """
+    rows = [list(BULLPEN_HEADER)]
+    for t in teams:
+        rows.append([
+            t.get("name", ""),
+            _stat_or_blank(t.get("bullpenEra")),
+            _stat_or_blank(t.get("bullpenKbb")),
+        ])
+    return rows
+
+
 def _write_csv(path, rows):
     path.write_text("\n".join(",".join(r) for r in rows) + "\n", encoding="utf-8")
 
 
 def write_stat_files(teams, out_dir):
-    """Write both stat files into ``out_dir`` and return their paths."""
+    """Write all stat files into ``out_dir`` and return the batting/fielding paths."""
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     batting = out_dir / BATTING_FILE
     fielding = out_dir / FIELDING_FILE
     _write_csv(batting, batting_rows(teams))
     _write_csv(fielding, fielding_rows(teams))
+    _write_csv(out_dir / BULLPEN_FILE, bullpen_rows(teams))
     return batting, fielding
 
 
 def is_populated(out_dir):
-    """True when ``out_dir`` already holds non-empty batting + fielding files."""
+    """True when ``out_dir`` already holds non-empty batting + fielding files.
+
+    The bullpen file is optional (the predictor degrades gracefully without it),
+    so it is not part of the populated check.
+    """
     out_dir = Path(out_dir)
     for name in (BATTING_FILE, FIELDING_FILE):
         f = out_dir / name

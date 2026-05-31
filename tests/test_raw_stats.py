@@ -71,6 +71,20 @@ class FieldingRowsTests(unittest.TestCase):
         self.assertEqual(rows[1][raw_stats.F_FLD], "0.000")
 
 
+class BullpenRowsTests(unittest.TestCase):
+    def test_header_and_values(self):
+        rows = raw_stats.bullpen_rows([
+            {"name": "Boston Red Sox", "bullpenEra": 3.45, "bullpenKbb": 2.10},
+        ])
+        self.assertEqual(rows[0], raw_stats.BULLPEN_HEADER)
+        self.assertEqual(rows[1], ["Boston Red Sox", "3.450", "2.100"])
+
+    def test_unknown_values_written_blank(self):
+        # Missing key and the -1 sentinel both render as an empty cell.
+        rows = raw_stats.bullpen_rows([{"name": "Sparse", "bullpenEra": -1.0}])
+        self.assertEqual(rows[1], ["Sparse", "", ""])
+
+
 class WriteAndDetectTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
