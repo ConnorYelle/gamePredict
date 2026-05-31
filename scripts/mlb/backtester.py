@@ -5,6 +5,7 @@ weights with the same formula the C++ engine uses (including the starting-pitche
 term). Reports accuracy, Brier score, and a home-field baseline.
 """
 
+import math
 from typing import Dict, List, Optional
 
 from . import config
@@ -51,7 +52,7 @@ def evaluate(inputs: List[Dict], weights: Dict[str, float]) -> Dict:
     """Score ``inputs`` with ``weights`` and return summary metrics."""
     model = PredictionModel(weights)
     evaluated = correct = home_wins = 0
-    brier_sum = winner_prob_sum = 0.0
+    brier_sum = winner_prob_sum = log_loss_sum = 0.0
 
     for g in inputs:
         p_home = model.home_win_probability(g["home"], g["away"],
@@ -61,6 +62,8 @@ def evaluate(inputs: List[Dict], weights: Dict[str, float]) -> Dict:
         prob_for_winner = p_home if g["home_won"] else (1.0 - p_home)
         brier_sum += (1.0 - prob_for_winner) ** 2
         winner_prob_sum += prob_for_winner
+        # Log-loss (cross-entropy); clamp keeps a confident miss from being -inf.
+        log_loss_sum += -math.log(min(1 - 1e-9, max(1e-9, prob_for_winner)))
         home_wins += g["home_won"]
         evaluated += 1
 
@@ -70,11 +73,15 @@ def evaluate(inputs: List[Dict], weights: Dict[str, float]) -> Dict:
         "home_field_baseline": home_wins / evaluated if evaluated else 0.0,
         "average_winner_prob": winner_prob_sum / evaluated if evaluated else 0.0,
         "brier_score": brier_sum / evaluated if evaluated else 0.0,
+        "log_loss": log_loss_sum / evaluated if evaluated else 0.0,
     }
 
 
 def run_backtest(season: int, start_date: str, end_date: str,
-                 use_pitchers: bool = True, api: Optional[MlbStatsApi] = None) -> None:
+                 use_pitchers: bool = True, api: Optional[MlbStatsApi] = None
+                 ) -> Optional[Dict]:
+    """Run a backtest and print the metrics. Returns the metrics dict (or None
+    when no games could be evaluated) so callers can persist them."""
     api = api or MlbStatsApi()
     print("\n=== Model Backtest vs. Actual MLB Results ===")
     print(f"Season {season}, window {start_date} -> {end_date}")
@@ -85,12 +92,12 @@ def run_backtest(season: int, start_date: str, end_date: str,
         inputs = build_game_inputs(api, season, start_date, end_date, use_pitchers)
     except Exception as exc:  # network/API issues
         print(f"Could not reach the MLB Stats API: {exc}")
-        return
+        return None
 
     results = evaluate(inputs, weights)
     if not results["games_evaluated"]:
         print("No completed games found to validate against.")
-        return
+        return None
 
     print(f"Games evaluated:     {results['games_evaluated']}")
     print(f"Model accuracy:      {results['accuracy']:.2%}")
@@ -98,3 +105,5 @@ def run_backtest(season: int, start_date: str, end_date: str,
     print(f"Edge over baseline:  {results['accuracy'] - results['home_field_baseline']:+.2%}")
     print(f"Avg prob on winners: {results['average_winner_prob']:.2%}")
     print(f"Brier score:         {results['brier_score']:.4f}")
+    print(f"Log-loss:            {results['log_loss']:.4f}")
+    return results

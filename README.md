@@ -126,3 +126,18 @@ is skipped and the model uses team stats only.
 <!-- METRICS-START -->
 Run `python scripts/validate_predictions.py --backtest` to generate results.
 <!-- METRICS-END -->
+
+## Metrics history
+
+How accuracy, Brier score, and log-loss have moved across model changes. Each
+training (`train_weights.py`) or tracking (`track_metrics.py`) run appends a row
+to `data/metrics_history.jsonl`; regenerate this chart with
+`python scripts/plot_metrics_history.py`.
+
+<!-- METRICS-HISTORY-START -->
+
+![Model metrics history](docs/metrics_history.svg)
+
+_Latest (train [2022, 2023, 2024] -> val 2025, git `465e6d0*`): accuracy 58.52% · Brier 0.2346 · log-loss 0.6612 — 2 run(s) recorded._
+
+<!-- METRICS-HISTORY-END -->

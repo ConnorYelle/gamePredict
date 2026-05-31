@@ -1,0 +1,32 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="760" height="386" viewBox="0 0 760 386" font-family="Arial, sans-serif">
+<rect width="760" height="386" rx="14" fill="#0f172a"/>
+<text x="64" y="28" fill="#e2e8f0" font-size="18" font-weight="bold">Model metrics history</text>
+<text x="64" y="64" fill="#e2e8f0" font-size="15" font-weight="bold">Brier score</text>
+<text x="664" y="64" fill="#f87171" font-size="13" text-anchor="end">0.2346  (-0.0019 vs first, improved)</text>
+<line x1="64" y1="84.7" x2="664" y2="84.7" stroke="#334155" stroke-width="1" stroke-dasharray="3 3"/>
+<text x="56" y="88.7" fill="#94a3b8" font-size="11" text-anchor="end">0.2366</text>
+<line x1="64" y1="129.3" x2="664" y2="129.3" stroke="#334155" stroke-width="1" stroke-dasharray="3 3"/>
+<text x="56" y="133.3" fill="#94a3b8" font-size="11" text-anchor="end">0.2346</text>
+<polyline points="64.0,84.7 664.0,129.3" fill="none" stroke="#f87171" stroke-width="2.5"/>
+<circle cx="64.0" cy="84.7" r="3" fill="#f87171"/>
+<circle cx="664.0" cy="129.3" r="3" fill="#f87171"/>
+<text x="64" y="174" fill="#e2e8f0" font-size="15" font-weight="bold">Accuracy</text>
+<text x="664" y="174" fill="#34d399" font-size="13" text-anchor="end">58.52%  (+0.0046 vs first, improved)</text>
+<line x1="64" y1="194.7" x2="664" y2="194.7" stroke="#334155" stroke-width="1" stroke-dasharray="3 3"/>
+<text x="56" y="198.7" fill="#94a3b8" font-size="11" text-anchor="end">58.52%</text>
+<line x1="64" y1="239.3" x2="664" y2="239.3" stroke="#334155" stroke-width="1" stroke-dasharray="3 3"/>
+<text x="56" y="243.3" fill="#94a3b8" font-size="11" text-anchor="end">58.06%</text>
+<polyline points="64.0,239.3 664.0,194.7" fill="none" stroke="#34d399" stroke-width="2.5"/>
+<circle cx="64.0" cy="239.3" r="3" fill="#34d399"/>
+<circle cx="664.0" cy="194.7" r="3" fill="#34d399"/>
+<text x="64" y="284" fill="#e2e8f0" font-size="15" font-weight="bold">Log-loss</text>
+<text x="664" y="284" fill="#60a5fa" font-size="13" text-anchor="end">0.6612  (-0.0040 vs first, improved)</text>
+<line x1="64" y1="304.7" x2="664" y2="304.7" stroke="#334155" stroke-width="1" stroke-dasharray="3 3"/>
+<text x="56" y="308.7" fill="#94a3b8" font-size="11" text-anchor="end">0.6651</text>
+<line x1="64" y1="349.3" x2="664" y2="349.3" stroke="#334155" stroke-width="1" stroke-dasharray="3 3"/>
+<text x="56" y="353.3" fill="#94a3b8" font-size="11" text-anchor="end">0.6612</text>
+<polyline points="64.0,304.7 664.0,349.3" fill="none" stroke="#60a5fa" stroke-width="2.5"/>
+<circle cx="64.0" cy="304.7" r="3" fill="#60a5fa"/>
+<circle cx="664.0" cy="349.3" r="3" fill="#60a5fa"/>
+<text x="664" y="378" fill="#94a3b8" font-size="11" text-anchor="end">2 run(s), oldest → newest</text>
+</svg>

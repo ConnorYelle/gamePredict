@@ -1,6 +1,7 @@
 """Tests for mlb.backtester — input assembly, metric math, and report output."""
 
 import io
+import math
 import unittest
 from contextlib import redirect_stdout
 
@@ -95,6 +96,8 @@ class EvaluateTests(unittest.TestCase):
         self.assertEqual(res["home_field_baseline"], 0.5)
         self.assertAlmostEqual(res["average_winner_prob"], 0.5)
         self.assertAlmostEqual(res["brier_score"], 0.25)
+        # p=0.5 every game -> per-game log-loss is -ln(0.5).
+        self.assertAlmostEqual(res["log_loss"], -math.log(0.5))
 
     def test_accuracy_when_model_is_right(self):
         # Strong home team that actually won -> correct, high winner prob.

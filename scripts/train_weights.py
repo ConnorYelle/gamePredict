@@ -16,14 +16,15 @@ CLI facade over :class:`mlb.trainer.WeightTrainer`.
 
 import argparse
 
-from mlb import config
-from mlb.trainer import WeightTrainer
+from mlb import backtester, config, metrics_log
+from mlb.trainer import WeightTrainer, season_window
 
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--train-seasons", default="2024",
-                        help="comma-separated seasons to train on")
+    parser.add_argument("--train-seasons", nargs="+", default=["2024"],
+                        help="seasons to train on, space- or comma-separated "
+                             "(e.g. --train-seasons 2023 2024 or 2023,2024)")
     parser.add_argument("--val-season", type=int, default=2025,
                         help="held-out season for out-of-sample evaluation")
     parser.add_argument("--iters", type=int, default=40,
@@ -32,10 +33,16 @@ def main():
                         help="train with team stats only")
     parser.add_argument("--dry-run", action="store_true",
                         help="do not write config.json")
+    parser.add_argument("-n", "--note", default="",
+                        help="extra label for this run in the metrics history")
+    parser.add_argument("--no-log", action="store_true",
+                        help="do not append this run to data/metrics_history.jsonl")
     args = parser.parse_args()
 
     use_pitchers = not args.no_pitchers
-    train_seasons = [int(s) for s in args.train_seasons.split(",") if s.strip()]
+    # Accept both "2023 2024" (nargs list) and "2023,2024" (comma string).
+    train_seasons = [int(s) for tok in args.train_seasons
+                     for s in str(tok).split(",") if s.strip()]
 
     print("=" * 60)
     print("Self-learning weight trainer")
@@ -76,6 +83,20 @@ def main():
     else:
         config.save_weights(learned)
         print("\nWrote learned weights to config/config.json")
+
+    # Record the held-out validation result so every training run leaves a
+    # tracked data point (see scripts/track_metrics.py --show).
+    if not args.no_log and val_inputs:
+        note = f"train {train_seasons} -> val {args.val_season}"
+        if args.note:
+            note = f"{args.note} ({note})"
+        if args.dry_run:
+            note = "[dry-run] " + note
+        metrics_log.log_run(
+            backtester.evaluate(val_inputs, learned), learned, note=note,
+            season=args.val_season, window=season_window(args.val_season),
+            use_pitchers=use_pitchers)
+        print(f"Recorded validation metrics to {metrics_log.HISTORY_PATH}")
 
 
 if __name__ == "__main__":

@@ -11,9 +11,23 @@ python runPipeline.py
 
 python scripts/train_weights.py
     Teaches the model from past seasons so future predictions are smarter.
+    Automatically records the held-out validation accuracy/Brier/log-loss to
+    data/metrics_history.jsonl. Add -n "what changed" to label the run, or
+    --no-log to skip recording.
 
 python scripts/validate_predictions.py --backtest
     Replays a past season and reports how accurate the model was.
+
+python scripts/track_metrics.py -n "what I changed"
+    Backtests the current model, records accuracy/Brier/log-loss (with the note
+    and git commit) to data/metrics_history.jsonl, then prints the whole history
+    so you can see if a change helped. Use --show to just view the history.
+    Commit data/metrics_history.jsonl to keep the record across changes.
+
+python scripts/plot_metrics_history.py
+    Renders the recorded history to docs/metrics_history.svg and embeds it (plus
+    the latest numbers) in the "Metrics history" section of README.md. Run it
+    after recording new runs to refresh the chart.
 
 python scripts/archive_schedule.py
     Saves yesterday's games and final scores into data/schedules/.
