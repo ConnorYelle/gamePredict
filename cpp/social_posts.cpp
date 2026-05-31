@@ -1,6 +1,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <ctime>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -255,9 +256,35 @@ body {
     color: white;
 }
 
-h1 {
-    text-align: center;
+/* Title bar: brand pinned left, title centered, date pinned right. The 1fr/auto
+   /1fr columns keep the title optically centered regardless of how wide the
+   brand and date are. */
+.topbar {
+    display: grid;
+    grid-template-columns: 1fr auto 1fr;
+    align-items: center;
+    gap: 16px;
     margin-bottom: 40px;
+}
+
+.topbar .brand {
+    justify-self: start;
+    font-size: 20px;
+    font-weight: bold;
+    color: #60a5fa;
+}
+
+.topbar .title {
+    justify-self: center;
+    margin: 0;
+    font-size: 28px;
+}
+
+.topbar .date {
+    justify-self: end;
+    font-size: 16px;
+    color: #94a3b8;
+    white-space: nowrap;
 }
 
 .games {
@@ -345,10 +372,27 @@ h1 {
     background: #3e4c63;
 }
 
+/* Collapsed by default; the .open class animates it in. Animating max-height
+   (plus opacity and the spacing/border) gives a smooth slide instead of the
+   instant show/hide a display toggle produces. max-height is an upper bound the
+   panel never actually reaches, so the slide always plays in full. */
 .details {
+    overflow: hidden;
+    max-height: 0;
+    opacity: 0;
+    margin-top: 0;
+    padding-top: 0;
+    border-top: 0 solid #334155;
+    transition: max-height 0.35s ease, opacity 0.25s ease,
+                margin-top 0.35s ease, padding-top 0.35s ease;
+}
+
+.details.open {
+    max-height: 600px;
+    opacity: 1;
     margin-top: 14px;
-    border-top: 1px solid #334155;
     padding-top: 10px;
+    border-top-width: 1px;
 }
 
 .detail-row {
@@ -393,7 +437,11 @@ h1 {
 
 <body>
 
-<h1>MLB Predictions - )" << date_str << R"(</h1>
+<header class="topbar">
+    <div class="brand">gamePredict</div>
+    <h1 class="title">MLB Predictions</h1>
+    <div class="date">)" << date_str << R"(</div>
+</header>
 
 <div class="games" id="games"></div>
 
@@ -528,16 +576,15 @@ games.forEach(g => {
         </div>
 
         <button class="details-btn" type="button">Matchup details &#9662;</button>
-        <div class="details" style="display:none">${buildDetails(g)}</div>
+        <div class="details">${buildDetails(g)}</div>
     `;
 
     const btn = card.querySelector(".details-btn");
     const panel = card.querySelector(".details");
 
     btn.addEventListener("click", () => {
-        const isOpen = panel.style.display !== "none";
-        panel.style.display = isOpen ? "none" : "block";
-        btn.innerHTML = isOpen ? "Matchup details &#9662;" : "Hide details &#9652;";
+        const isOpen = panel.classList.toggle("open");
+        btn.innerHTML = isOpen ? "Hide details &#9652;" : "Matchup details &#9662;";
     });
 
     container.appendChild(card);
@@ -604,7 +651,20 @@ int main(int argc, char **argv) {
     ig << "#MLBPrediction #BaseballAnalytics #GameDay\n";
     ig.close();
 
-    std::string date_str = "today";
+    // Today's date for the title bar, e.g. "May 31, 2026".
+    std::string date_str;
+    {
+        std::time_t now = std::time(nullptr);
+        std::tm local_tm{};
+    #ifdef _WIN32
+        localtime_s(&local_tm, &now);
+    #else
+        localtime_r(&now, &local_tm);
+    #endif
+        char buf[64];
+        if (std::strftime(buf, sizeof(buf), "%B %d, %Y", &local_tm)) date_str = buf;
+    }
+
     auto team_stats = load_team_stats();
     write_html(outdir / "matchup_preview.html", games, date_str, team_stats);
 
