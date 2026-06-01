@@ -212,6 +212,7 @@ def build_live_payload(api, predictions_path, date_str=None, stats_dir=None):
             "awayStats": team_stats.get(g["away"]),
             "homeStats": team_stats.get(g["home"]),
             "state": (live or {}).get("state", "preview"),
+            "startTime": (live or {}).get("start_time", ""),
             "detailedState": (live or {}).get("detailed_state", ""),
             "awayScore": (live or {}).get("away_score"),
             "homeScore": (live or {}).get("home_score"),

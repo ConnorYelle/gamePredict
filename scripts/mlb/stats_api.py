@@ -229,9 +229,12 @@ class MlbStatsApi:
 
     def live_games(self, date_str):
         """Return today's games with live status for the dashboard:
-        ``{home, away, state, detailed_state, home_score, away_score, inning,
-        inning_state, is_top, home_sp, away_sp, current_pitcher, home_won,
-        winner}``.
+        ``{home, away, state, start_time, detailed_state, home_score,
+        away_score, inning, inning_state, is_top, home_sp, away_sp,
+        current_pitcher, home_won, winner}``.
+
+        ``start_time`` is the scheduled first pitch as a UTC ISO timestamp
+        (the feed's ``gameDate``); the front-end renders it in local time.
 
         One schedule call hydrated with ``linescore`` (live score/inning and,
         when a game is underway, the pitcher on the mound) and
@@ -270,6 +273,7 @@ class MlbStatsApi:
                     "home": home["team"]["name"],
                     "away": away["team"]["name"],
                     "state": state,
+                    "start_time": game.get("gameDate", ""),
                     "detailed_state": game.get("status", {}).get("detailedState", ""),
                     "home_score": hs,
                     "away_score": as_,

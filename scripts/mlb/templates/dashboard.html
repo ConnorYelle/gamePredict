@@ -272,6 +272,12 @@ function ordinal(n) {
     const s = ["th", "st", "nd", "rd"], v = n % 100;
     return n + (s[(v - 20) % 10] || s[v] || s[0]);
 }
+function startTimeLabel(g) {
+    if (!g.startTime) return "";
+    const d = new Date(g.startTime);
+    if (isNaN(d)) return "";
+    return d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+}
 function statusBadge(g) {
     if (g.state === "live") {
         const half = (g.inningState || "").slice(0, 3);
@@ -279,7 +285,10 @@ function statusBadge(g) {
         return { cls: "live", html: `<span class="dot"></span>${half ? half + " " : ""}${inn}` };
     }
     if (g.state === "final") return { cls: "final", html: "Final" };
-    if (g.state === "preview") return { cls: "", html: "Scheduled" };
+    if (g.state === "preview") {
+        const t = startTimeLabel(g);
+        return { cls: "", html: t ? `Scheduled · ${t}` : "Scheduled" };
+    }
     return { cls: "", html: g.detailedState || "—" };
 }
 function middleHtml(g) {
