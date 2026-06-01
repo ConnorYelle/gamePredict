@@ -26,14 +26,46 @@ cd gamePredict
 
 ## How to use it
 
+Everything is reachable through one command, `gamePredict`. The repo ships
+`gamePredict.cmd` (Windows), `gamePredict.ps1` (PowerShell), and `gamePredict`
+(macOS/Linux) wrappers — add the repo folder to your `PATH` and you can call
+`gamePredict <command>` from anywhere. (No PATH setup? Just run
+`python gamePredict.py <command>`.)
+
+```bash
+gamePredict run      # full pipeline -> today's predictions
+gamePredict live     # real-time dashboard in your browser
+gamePredict test     # run the test suite
+gamePredict help     # list every command
+```
+
 ### 1. Get today's predictions
 
 ```bash
-python runPipeline.py
+gamePredict run            # or: python runPipeline.py
 ```
 
 This runs everything: collects stats, fetches today's games and starters,
 builds the C++ engine, and prints predictions. Results are saved in `outputs/`.
+
+### Live dashboard
+
+```bash
+gamePredict live           # opens http://127.0.0.1:8000 in your browser
+```
+
+Starts a small local server and opens a dashboard that **updates itself every
+30 seconds** — no page reloads. For each of today's games it shows:
+
+- **Live scores and inning** (e.g. "BOT 6TH") as the game is played.
+- **The starting pitchers**, and the **pitcher currently on the mound** once a
+  game is underway.
+- A **coloured border** once a game is final: **green** if the model's predicted
+  winner was right, **red** if it was wrong — with the final score.
+
+Options: `--port N`, `--host H`, `--no-browser`, `--predictions PATH`. The page
+reads your latest `outputs/predictions.txt`, so run `gamePredict run` first to
+populate today's slate.
 
 ### 2. Let the model teach itself
 
@@ -87,16 +119,37 @@ python scripts/validate_predictions.py --backtest --no-pitchers
 
 ## All the commands
 
+Every command below also works as `python gamePredict.py <command>` (or the
+older `python scripts/...` entrypoint it wraps).
+
 | Command | What it does |
 |---|---|
-| `python runPipeline.py` | Run the full pipeline and print today's predictions |
-| `python scripts/train_weights.py` | Learn weights from past seasons → `config.json` |
-| `python scripts/validate_predictions.py --backtest` | Measure accuracy against a real season |
-| `python scripts/statsCollector.py` | Collect team batting/pitching/fielding stats |
-| `python scripts/scheduleFetcher.py` | Fetch today's games + probable starters → `games.txt` |
-| `python scripts/collect_pitchers.py` | Fetch starting-pitcher stats → `StartingPitchers.csv` |
+| `gamePredict run` | Run the full pipeline and print today's predictions |
+| `gamePredict live` | Serve the real-time dashboard (live scores, pitchers, win/loss borders) |
+| `gamePredict test` | Run the test suite (add `--coverage` for a coverage report) |
+| `gamePredict train` | Learn weights from past seasons → `config/config.json` |
+| `gamePredict backtest` | Measure accuracy against a real season |
+| `gamePredict validate` | Grade saved predictions against games/results |
+| `gamePredict fetch` | Fetch today's games + probable starters → `games.txt` |
+| `gamePredict stats` | Collect team batting/pitching/fielding stats |
+| `gamePredict pitchers` | Fetch starting-pitcher stats → `StartingPitchers.csv` |
+| `gamePredict archive` | Save a day's games + final scores into `data/schedules/` |
+| `gamePredict metrics` | Backtest and record accuracy/Brier/log-loss to history |
+| `gamePredict plot` | Render the metrics-history chart and refresh this README |
 
 Common flags: `--season` / `--start` / `--end` (backtest window), `--train-seasons` / `--val-season` (training seasons), `--no-pitchers` (team stats only), `--dry-run` (don't save). Add `-h` to any command to see its options.
+
+## Running the tests
+
+```bash
+gamePredict test                 # run everything
+gamePredict test --coverage      # also print a coverage report + write htmlcov/
+```
+
+The suite runs offline (the network is faked) and the C++ engine tests compile
+the engine to verify it builds. Coverage uses [coverage.py](https://coverage.readthedocs.io);
+install it once with `pip install -r requirements-dev.txt` (the command degrades
+gracefully and just runs the tests if it isn't installed).
 
 ## How the prediction works
 

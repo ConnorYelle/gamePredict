@@ -222,6 +222,68 @@ class MlbStatsApi:
                 })
         return games
 
+    # Maps the API's coarse game phase onto the three states the live
+    # dashboard cares about; anything else (postponed, suspended, ...) is
+    # surfaced verbatim via ``detailed_state``.
+    _LIVE_STATE = {"Preview": "preview", "Live": "live", "Final": "final"}
+
+    def live_games(self, date_str):
+        """Return today's games with live status for the dashboard:
+        ``{home, away, state, detailed_state, home_score, away_score, inning,
+        inning_state, is_top, home_sp, away_sp, current_pitcher, home_won,
+        winner}``.
+
+        One schedule call hydrated with ``linescore`` (live score/inning and,
+        when a game is underway, the pitcher on the mound) and
+        ``probablePitcher`` (announced starters). ``state`` is one of
+        ``preview``/``live``/``final``/``other``. Scores are ``None`` before
+        first pitch; ``winner``/``home_won`` are only set once a final has a
+        decided score.
+        """
+        url = (f"{self.api}/schedule?sportId=1&date={date_str}"
+               f"&hydrate=linescore,probablePitcher")
+        data = self._get(url)
+
+        games = []
+        for day in data.get("dates", []):
+            for game in day.get("games", []):
+                home = game["teams"]["home"]
+                away = game["teams"]["away"]
+                abstract = game.get("status", {}).get("abstractGameState", "")
+                line = game.get("linescore") or {}
+
+                hs, as_ = home.get("score"), away.get("score")
+                home_won = winner = None
+                state = self._LIVE_STATE.get(abstract, "other")
+                if state == "final" and hs is not None and as_ is not None \
+                        and hs != as_:
+                    home_won = hs > as_
+                    winner = home["team"]["name"] if home_won else away["team"]["name"]
+
+                # The fielding side's pitcher is the one on the mound. When the
+                # API doesn't carry an active pitcher (preview/between innings),
+                # this stays blank and the front-end shows the matchup starters.
+                current_pitcher = ((line.get("defense") or {})
+                                   .get("pitcher") or {}).get("fullName", "")
+
+                games.append({
+                    "home": home["team"]["name"],
+                    "away": away["team"]["name"],
+                    "state": state,
+                    "detailed_state": game.get("status", {}).get("detailedState", ""),
+                    "home_score": hs,
+                    "away_score": as_,
+                    "inning": line.get("currentInning"),
+                    "inning_state": line.get("inningState", ""),
+                    "is_top": line.get("isTopInning"),
+                    "home_sp": (home.get("probablePitcher") or {}).get("fullName", ""),
+                    "away_sp": (away.get("probablePitcher") or {}).get("fullName", ""),
+                    "current_pitcher": current_pitcher,
+                    "home_won": home_won,
+                    "winner": winner,
+                })
+        return games
+
     def probable_starters(self, date_str):
         """Return {pitcher_id: name} for a date's announced probable starters."""
         url = f"{self.api}/schedule?sportId=1&date={date_str}&hydrate=probablePitcher"

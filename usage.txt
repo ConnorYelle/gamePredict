@@ -2,10 +2,34 @@
  MLB GAME PREDICTION ENGINE — COMMANDS
 ============================================================
 
+UNIFIED CLI
+------------------------------------------------------------
+
+gamePredict <command> [options]
+    One entry point for the whole project. Use the gamePredict / gamePredict.cmd
+    / gamePredict.ps1 wrapper (put the repo folder on your PATH) or run it as
+    `python gamePredict.py <command>`. Run `gamePredict help` for the full list.
+
+    Key commands: run, live, test, train, backtest, validate, fetch, stats,
+    pitchers, archive, metrics, plot. Each forwards its options to the
+    underlying script, so e.g. `gamePredict train --iters 60` works.
+
+gamePredict live [--port N] [--host H] [--no-browser] [--predictions PATH]
+    Starts a local web server (default http://127.0.0.1:8000) and opens a
+    dashboard that refreshes every 30s: live scores and inning, the starting
+    pitchers and the pitcher on the mound, and a green/red border once a game
+    is final (green = the model's pick won, red = it lost) with the final score.
+    Reads outputs/predictions.txt, so run `gamePredict run` first.
+
+gamePredict test [--coverage]
+    Runs the full test suite. With --coverage, measures coverage via coverage.py
+    (pip install -r requirements-dev.txt) and writes an HTML report to htmlcov/.
+
+
 MAIN
 ------------------------------------------------------------
 
-python runPipeline.py
+python runPipeline.py   (or: gamePredict run)
     Does everything: gets today's stats and games, makes predictions, and
     saves yesterday's final scores. This is the main command.
 

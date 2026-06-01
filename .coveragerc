@@ -1,0 +1,18 @@
+# Coverage config for `gamePredict test --coverage`.
+[run]
+branch = True
+source =
+    scripts
+    runPipeline.py
+    gamePredict.py
+omit =
+    tests/*
+    */__pycache__/*
+
+[report]
+show_missing = True
+skip_covered = False
+exclude_lines =
+    pragma: no cover
+    if __name__ == .__main__.:
+    raise NotImplementedError

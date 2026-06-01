@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+# POSIX wrapper so `gamePredict <command>` works once this repo is on PATH.
+exec python3 "$(dirname "$0")/gamePredict.py" "$@"

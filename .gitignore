@@ -14,6 +14,15 @@
 *.su
 *.gch
 *.pch
+*.pdb
+*.ilk
+*.exp
+*.idb
+
+# Windows/MinGW crash dumps (e.g. from the collect2/ld linker errors)
+*.stackdump
+core
+*.core
 
 # IDE and Editor files
 .vscode/
@@ -59,15 +68,14 @@ Makefile
 vcpkg_installed/
 conan/
 
-# OS-specific files
-.DS_Store
-Thumbs.db
-*.log
-
 # Temporary files
 *.tmp
 *.bak
 *.backup
+
+# Merge/patch leftovers
+*.orig
+*.rej
 
 # Local configuration
 .env
@@ -89,5 +97,10 @@ env/
 
 # Cached MLB Stats API responses (trainer/backtest)
 data/cache/
+
+# Coverage artifacts (gamePredict test --coverage)
+.coverage
+.coverage.*
+htmlcov/
 
 .claude
