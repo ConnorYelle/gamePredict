@@ -21,6 +21,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from . import config
+from .results_archive import ResultsArchive
 
 # Full team name -> ESPN logo abbreviation. Mirrors the table baked into
 # cpp/social_posts.cpp so the live page and the static social preview show the
@@ -228,7 +229,131 @@ def build_live_payload(api, predictions_path, date_str=None, stats_dir=None):
 
     return {
         "date": date_str,
+        "mode": "live",
         "generated": datetime.now(timezone.utc).isoformat(),
         "error": error,
+        "games": games,
+    }
+
+
+def _to_int(value):
+    """Parse an archived score cell (a string) into an int, or None."""
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def build_history_payload(date_str, archive=None, stats_dir=None):
+    """Assemble a *past* day's dashboard payload from the results archive.
+
+    This is the historical counterpart to :func:`build_live_payload`: instead of
+    polling the MLB API for live state, it reads the day's archived
+    ``final_scores.csv`` (actual scores + winner) and merges in the
+    ``predictions.txt`` snapshot saved alongside it. Each pick is graded -- the
+    card border is ``correct``/``incorrect`` once a final winner is known and a
+    prediction exists, else ``pending`` -- and a day-level ``summary`` (record,
+    accuracy, Brier) is computed over the graded games.
+
+    Game dicts deliberately share the shape :func:`build_live_payload` emits so
+    the dashboard renders both with the same code. ``awayP``/``homeP``/
+    ``favorite`` are ``None`` for days archived before predictions were
+    snapshotted (results show, but can't be graded). The ``archive`` and
+    ``stats_dir`` are injectable so this stays unit-testable without the real
+    data tree.
+    """
+    archive = archive or ResultsArchive()
+
+    try:
+        date = datetime.strptime(date_str, "%Y-%m-%d")
+    except (TypeError, ValueError):
+        return {"date": date_str, "mode": "history", "error":
+                f"Invalid date: {date_str!r} (expected YYYY-MM-DD).",
+                "summary": None, "hasPredictions": False, "games": []}
+
+    results = archive.load_scores(date)
+    pred_text = archive.load_predictions_text(date)
+    predictions = parse_predictions(pred_text) if pred_text else []
+    result_by_key = {(r.get("away", ""), r.get("home", "")): r for r in results}
+
+    team_stats = load_team_stats(stats_dir) if stats_dir else {}
+
+    # When the day's predictions are saved, drive off them (that's "my picks",
+    # and they can be shown even before the day's finals are archived). Older
+    # days hold results only, so fall back to listing those.
+    if predictions:
+        entries = [(p["away"], p["home"], p,
+                    result_by_key.get((p["away"], p["home"]))) for p in predictions]
+    else:
+        entries = [(r.get("away", ""), r.get("home", ""), None, r) for r in results]
+
+    games = []
+    matched = correct = 0
+    brier_sum = 0.0
+    for away, home, pred, res in entries:
+        res = res or {}
+        has_result = bool(res)
+        winner = res.get("winner") or None
+
+        favorite = pred["favorite"] if pred else None
+        away_p = round(pred["away_prob"] * 100.0, 1) if pred else None
+        home_p = round(pred["home_prob"] * 100.0, 1) if pred else None
+
+        border = "pending"
+        if pred and winner:
+            border = "correct" if winner == favorite else "incorrect"
+            matched += 1
+            p_win = pred["home_prob"] if winner == home else pred["away_prob"]
+            brier_sum += (1.0 - p_win) ** 2
+            if winner == favorite:
+                correct += 1
+
+        games.append({
+            "away": away,
+            "home": home,
+            "awayLogo": logo_url(away),
+            "homeLogo": logo_url(home),
+            "awayP": away_p,
+            "homeP": home_p,
+            "favorite": favorite,
+            "awayStats": team_stats.get(away),
+            "homeStats": team_stats.get(home),
+            "state": "final" if has_result else "preview",
+            "startTime": "",
+            "detailedState": "Final" if has_result else "Result pending",
+            "awayScore": _to_int(res.get("away_score")),
+            "homeScore": _to_int(res.get("home_score")),
+            "inning": None,
+            "inningState": "",
+            "isTop": None,
+            "awaySp": res.get("away_sp", ""),
+            "homeSp": res.get("home_sp", ""),
+            "currentPitcher": "",
+            "winner": winner,
+            "border": border,
+        })
+
+    summary = None
+    if matched:
+        summary = {
+            "games": matched,
+            "correct": correct,
+            "incorrect": matched - correct,
+            "accuracy": round(correct / matched * 100.0, 1),
+            "brier": round(brier_sum / matched, 4),
+        }
+
+    return {
+        "date": date_str,
+        "mode": "history",
+        "generated": datetime.now(timezone.utc).isoformat(),
+        # Only a genuinely empty day (no predictions and no results) is an error.
+        # A predictions-only or results-only day renders fine and is flagged via
+        # summary/hasPredictions/hasResults for the front-end to message.
+        "error": None if (predictions or results)
+        else f"No archived data for {date_str}.",
+        "summary": summary,
+        "hasPredictions": bool(predictions),
+        "hasResults": bool(results),
         "games": games,
     }

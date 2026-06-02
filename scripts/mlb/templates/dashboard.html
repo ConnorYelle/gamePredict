@@ -29,6 +29,59 @@ body {
 .topbar .title { justify-self: center; margin: 0; font-size: 28px; }
 .topbar .date  { justify-self: end; font-size: 16px; color: #94a3b8; white-space: nowrap; }
 
+/* Day navigation: prev / date picker / next, plus a jump-to-live button. */
+.navbar {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+    margin-bottom: 14px;
+}
+.navbar button {
+    padding: 8px 14px;
+    background: #1e293b;
+    color: #e2e8f0;
+    border: 1px solid #334155;
+    border-radius: 10px;
+    font-size: 14px;
+    font-weight: bold;
+    cursor: pointer;
+    transition: background 0.15s ease, border-color 0.15s ease;
+}
+.navbar button:hover:not(:disabled) { background: #2b3a52; }
+.navbar button:disabled { opacity: 0.4; cursor: default; }
+.navbar #liveBtn { color: #fca5a5; border-color: #7f1d1d; }
+.navbar #liveBtn.active {
+    background: #b91c1c; color: #fff; border-color: #b91c1c; cursor: default;
+}
+.navbar #liveBtn .dot {
+    display: inline-block; width: 7px; height: 7px; border-radius: 50%;
+    background: currentColor; margin-right: 5px;
+}
+.navbar #liveBtn.active .dot { animation: pulse 1.2s infinite; }
+.navbar input[type="date"] {
+    padding: 7px 10px;
+    background: #1e293b;
+    color: #e2e8f0;
+    border: 1px solid #334155;
+    border-radius: 10px;
+    font-size: 14px;
+    font-family: inherit;
+    color-scheme: dark;
+}
+
+/* Day record line shown when viewing an archived day. */
+.summary {
+    text-align: center;
+    margin-bottom: 16px;
+    font-size: 15px;
+    color: #cbd5e1;
+    min-height: 1.2em;
+}
+.summary b { color: #f8fafc; }
+.summary .muted { color: #94a3b8; font-size: 13px; }
+
 /* Status line under the title: legend + last-updated clock. */
 .statusbar {
     display: flex;
@@ -102,16 +155,43 @@ body {
 }
 @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.25; } }
 
-.teams { display: flex; justify-content: space-between; align-items: center; }
-.team  { text-align: center; width: 40%; }
-.team img { width: 90px; height: 90px; object-fit: contain; }
+/* The whole card links to the full per-matchup page. */
+.card.clickable { cursor: pointer; }
+.card.clickable:hover { background: #243049; }
+.card.clickable:hover .team-name { text-decoration: underline; }
+.card.clickable:focus-visible { outline: 2px solid #60a5fa; outline-offset: 2px; }
+/* Keep interactive children feeling like themselves, not the card link. */
+.card.clickable .details-btn,
+.card.clickable .details { cursor: auto; }
+
+/* Three-column matchup row: away | score | home. The side columns flex and may
+   wrap their team name; the centre column sizes to the score and never wraps,
+   so the two probabilities always line up and the score stays on one line at
+   any card width. align-items:flex-start keeps logos (and the probs below the
+   fixed-height name block) on a shared baseline. */
+.teams {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 8px;
+}
+.team  { flex: 1 1 0; min-width: 0; text-align: center; }
+.team img { width: 90px; height: 90px; max-width: 100%; object-fit: contain; }
 .team-name { margin-top: 10px; font-weight: bold; min-height: 2.6em; }
 .prob { margin-top: 8px; font-size: 24px; font-weight: bold; }
 
-/* Centre column: shows "VS" before first pitch, the live/final score after. */
-.middle { text-align: center; min-width: 64px; }
-.vs { font-size: 22px; font-weight: bold; }
-.score { font-size: 30px; font-weight: bold; font-variant-numeric: tabular-nums; }
+/* Centre column: shows "VS" before first pitch, the live/final score after.
+   Fixed to the logo height and centred so the score sits between the logos. */
+.middle {
+    flex: 0 0 auto;
+    height: 90px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+}
+.vs    { font-size: 22px; font-weight: bold; white-space: nowrap; }
+.score { font-size: 30px; font-weight: bold; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .winner-side { color: #22c55e; }
 
 .pitchers {
@@ -133,6 +213,7 @@ body {
 .favorite .mark { font-weight: bold; }
 .favorite .mark.correct   { color: #22c55e; }
 .favorite .mark.incorrect { color: #ef4444; }
+.favorite .no-pred { color: #94a3b8; font-size: 15px; }
 
 .details-btn {
     margin-top: auto;
@@ -195,6 +276,15 @@ body {
     <div class="date" id="date"></div>
 </header>
 
+<nav class="navbar">
+    <button id="prevBtn" type="button">&#9664; Prev day</button>
+    <input type="date" id="datePicker" aria-label="Jump to a date">
+    <button id="nextBtn" type="button">Next day &#9654;</button>
+    <button id="liveBtn" type="button"><span class="dot"></span>Live</button>
+</nav>
+
+<div class="summary" id="summary"></div>
+
 <div class="statusbar">
     <span class="legend"><span class="swatch correct"></span>Prediction correct</span>
     <span class="legend"><span class="swatch incorrect"></span>Prediction wrong</span>
@@ -213,6 +303,11 @@ const container = document.getElementById("games");
 const banner = document.getElementById("banner");
 const dateEl = document.getElementById("date");
 const updatedEl = document.getElementById("updated");
+const summaryEl = document.getElementById("summary");
+const prevBtn = document.getElementById("prevBtn");
+const nextBtn = document.getElementById("nextBtn");
+const liveBtn = document.getElementById("liveBtn");
+const datePicker = document.getElementById("datePicker");
 
 // Matchups whose detail panel the user has opened, so a refresh-rebuild doesn't
 // snap them shut.
@@ -234,6 +329,9 @@ const C_WORSE   = [239, 68, 68];
 
 const isNum = v => typeof v === "number" && !Number.isNaN(v);
 const fmtStat = (v, dp) => isNum(v) ? Number(v).toFixed(dp) : "—";
+// Probabilities are absent for archived days saved before predictions were
+// snapshotted, so render a dash rather than crashing on null.
+const fmtProb = p => isNum(p) ? p.toFixed(1) + "%" : "—";
 
 function mixRgb(from, to, t) {
     const c = from.map((v, i) => Math.round(v + (to[i] - v) * t));
@@ -307,6 +405,7 @@ function pitchersHtml(g) {
     return "Starters: TBD";
 }
 function favoriteHtml(g) {
+    if (!g.favorite) return `<span class="no-pred">No prediction recorded</span>`;
     let mark = "";
     if (g.border === "correct")   mark = ` <span class="mark correct">&#10003;</span>`;
     if (g.border === "incorrect") mark = ` <span class="mark incorrect">&#10007;</span>`;
@@ -315,9 +414,12 @@ function favoriteHtml(g) {
 
 function buildCard(g) {
     const card = document.createElement("div");
-    card.className = `card ${g.border}`;
+    card.className = `card clickable ${g.border}`;
     const badge = statusBadge(g);
     const key = keyOf(g);
+
+    const params = new URLSearchParams({ date: viewDate || "", away: g.away, home: g.home });
+    const matchupHref = "/matchup?" + params.toString();
 
     card.innerHTML = `
         <div class="status ${badge.cls}">${badge.html}</div>
@@ -325,13 +427,13 @@ function buildCard(g) {
             <div class="team">
                 <img src="${g.awayLogo}" alt="${g.away}">
                 <div class="team-name">${g.away}</div>
-                <div class="prob">${g.awayP.toFixed(1)}%</div>
+                <div class="prob">${fmtProb(g.awayP)}</div>
             </div>
             <div class="middle">${middleHtml(g)}</div>
             <div class="team">
                 <img src="${g.homeLogo}" alt="${g.home}">
                 <div class="team-name">${g.home}</div>
-                <div class="prob">${g.homeP.toFixed(1)}%</div>
+                <div class="prob">${fmtProb(g.homeP)}</div>
             </div>
         </div>
         <div class="pitchers">${pitchersHtml(g)}</div>
@@ -351,10 +453,119 @@ function buildCard(g) {
         setLabel(open);
         if (open) openDetails.add(key); else openDetails.delete(key);
     });
+
+    // The whole card navigates to the matchup page, except interactions with
+    // the inline details control/panel (so expanding stats doesn't navigate)
+    // and ordinary text selection.
+    const navigate = () => { window.location.href = matchupHref; };
+    const fromDetails = e => e.target.closest(".details-btn, .details");
+    card.addEventListener("click", e => {
+        if (fromDetails(e) || window.getSelection().toString()) return;
+        navigate();
+    });
+    // Keyboard access: the card behaves like a link.
+    card.setAttribute("role", "link");
+    card.setAttribute("tabindex", "0");
+    card.setAttribute("aria-label", `${g.away} at ${g.home} — view matchup`);
+    card.addEventListener("keydown", e => {
+        if ((e.key === "Enter" || e.key === " ") && !fromDetails(e)) {
+            e.preventDefault();
+            navigate();
+        }
+    });
     return card;
 }
 
+// ----- day navigation: live (today) <-> archived past days ----------------- //
+// `mode` is "live" or "history". In live mode we poll /api/live every 30s; in
+// history mode we fetch a single graded /api/history?date=… snapshot and stop
+// polling. `availableDates` (ascending YYYY-MM-DD) bounds the picker and drives
+// the prev/next buttons; `liveDate` is whatever today's live payload reports.
+let mode = "live";
+let currentDate = null;          // selected day while in history mode
+let liveDate = null;             // today's date, from the live payload
+let viewDate = "";               // date currently shown (drives matchup links)
+let availableDates = [];         // archived days that can be reviewed
+let pollTimer = null;
+
+function startPolling() {
+    stopPolling();
+    refresh();
+    pollTimer = setInterval(refresh, REFRESH_MS);
+}
+function stopPolling() {
+    if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+}
+
+function goLive() {
+    mode = "live";
+    currentDate = null;
+    banner.classList.remove("show");
+    startPolling();
+}
+
+async function showHistory(date) {
+    mode = "history";
+    currentDate = date;
+    stopPolling();
+    try {
+        const res = await fetch("/api/history?date=" + encodeURIComponent(date),
+                                { cache: "no-store" });
+        if (!res.ok) throw new Error("HTTP " + res.status);
+        render(await res.json());
+    } catch (err) {
+        banner.textContent = "Could not load archived results: " + err.message;
+        banner.classList.add("show");
+        updateNav();
+    }
+}
+
+function prevDay() {
+    const cur = mode === "live" ? (liveDate || "9999-99-99") : currentDate;
+    const earlier = availableDates.filter(d => d < cur);
+    if (earlier.length) showHistory(earlier[earlier.length - 1]);
+}
+function nextDay() {
+    if (mode === "live") return;
+    const later = availableDates.filter(d => d > currentDate);
+    if (later.length) showHistory(later[0]);
+    else goLive();
+}
+
+function updateNav() {
+    const cur = mode === "live" ? (liveDate || "9999-99-99") : currentDate;
+    prevBtn.disabled = !availableDates.some(d => d < cur);
+    nextBtn.disabled = mode === "live";
+    liveBtn.classList.toggle("active", mode === "live");
+    if (availableDates.length) {
+        datePicker.min = availableDates[0];
+        datePicker.max = liveDate || availableDates[availableDates.length - 1];
+    }
+    datePicker.value = mode === "live" ? (liveDate || "") : currentDate;
+}
+
+function renderSummary(payload) {
+    if (payload.mode !== "history") { summaryEl.innerHTML = ""; return; }
+    const s = payload.summary;
+    if (s) {
+        summaryEl.innerHTML = `Record: <b>${s.correct}&ndash;${s.incorrect}</b>` +
+            ` &middot; ${s.accuracy}% correct &middot; Brier ${s.brier}` +
+            ` <span class="muted">(${s.games} games)</span>`;
+    } else if (payload.hasPredictions) {
+        summaryEl.innerHTML =
+            `<span class="muted">Predictions saved for this day &mdash; ` +
+            `results aren't in yet, so they can't be graded.</span>`;
+    } else if ((payload.games || []).length) {
+        summaryEl.innerHTML =
+            `<span class="muted">No saved predictions for this day &mdash; ` +
+            `showing final scores only.</span>`;
+    } else {
+        summaryEl.innerHTML = "";
+    }
+}
+
 function render(payload) {
+    viewDate = payload.date || "";
     dateEl.textContent = payload.date || "";
     if (payload.error) { banner.textContent = payload.error; banner.classList.add("show"); }
     else banner.classList.remove("show");
@@ -362,26 +573,59 @@ function render(payload) {
     container.innerHTML = "";
     const games = payload.games || [];
     if (!games.length) {
-        container.innerHTML = `<div class="empty">No games scheduled for this date.</div>`;
+        const msg = payload.mode === "history"
+            ? "No archived games for this date."
+            : "No games scheduled for this date.";
+        container.innerHTML = `<div class="empty">${msg}</div>`;
     } else {
         games.forEach(g => container.appendChild(buildCard(g)));
     }
-    updatedEl.textContent = "Updated " + new Date().toLocaleTimeString();
+
+    if (payload.mode === "history") {
+        updatedEl.textContent = "Archived final results";
+    } else {
+        updatedEl.textContent = "Updated " + new Date().toLocaleTimeString();
+    }
+    renderSummary(payload);
+    updateNav();
 }
 
 async function refresh() {
+    if (mode !== "live") return;  // a stray timer must never clobber history
     try {
         const res = await fetch("/api/live", { cache: "no-store" });
         if (!res.ok) throw new Error("HTTP " + res.status);
-        render(await res.json());
+        const payload = await res.json();
+        liveDate = payload.date || liveDate;
+        render(payload);
     } catch (err) {
         banner.textContent = "Could not reach the live server: " + err.message;
         banner.classList.add("show");
     }
 }
 
-refresh();
-setInterval(refresh, REFRESH_MS);
+prevBtn.addEventListener("click", prevDay);
+nextBtn.addEventListener("click", nextDay);
+liveBtn.addEventListener("click", () => { if (mode !== "live") goLive(); });
+datePicker.addEventListener("change", () => {
+    const v = datePicker.value;
+    if (!v) return;
+    if (liveDate && v >= liveDate) goLive(); else showHistory(v);
+});
+
+async function init() {
+    try {
+        const res = await fetch("/api/history/dates", { cache: "no-store" });
+        availableDates = (await res.json()).dates || [];
+    } catch (err) { /* navigation still works for live-only */ }
+
+    // Returning from a matchup page (or a shared link) can request a specific
+    // archived day via ?date=; otherwise open in live mode.
+    const wanted = new URLSearchParams(location.search).get("date");
+    if (wanted && availableDates.includes(wanted)) showHistory(wanted);
+    else goLive();
+}
+init();
 
 </script>
 

@@ -191,6 +191,6 @@ to `data/metrics_history.jsonl`; regenerate this chart with
 
 ![Model metrics history](docs/metrics_history.svg)
 
-_Latest (train [2022, 2023, 2024] -> val 2025, git `465e6d0*`): accuracy 58.52% · Brier 0.2346 · log-loss 0.6612 — 2 run(s) recorded._
+_Latest (train [2024] -> val 2025, git `784924f*`): accuracy 58.44% · Brier 0.2351 · log-loss 0.6620 — 3 run(s) recorded._
 
 <!-- METRICS-HISTORY-END -->

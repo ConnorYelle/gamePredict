@@ -6,12 +6,16 @@ HTTP so the request handling and cache behaviour are covered end to end.
 """
 
 import json
+import tempfile
 import threading
 import unittest
 import urllib.request
+from datetime import datetime
+from pathlib import Path
 from urllib.error import HTTPError
 
 from mlb import live_server
+from mlb.results_archive import ResultsArchive
 
 
 class ServerTestBase(unittest.TestCase):
@@ -57,6 +61,70 @@ class RouteTests(ServerTestBase):
         with self.assertRaises(HTTPError) as cm:
             self.get(base + "/nope")
         self.assertEqual(cm.exception.code, 404)
+
+    def test_matchup_page_serves_html(self):
+        base = self.make()
+        status, ctype, body = self.get(base + "/matchup?away=A&home=B")
+        self.assertEqual(status, 200)
+        self.assertIn("text/html", ctype)
+        self.assertIn("/api/matchup", body)  # the page fetches this route
+
+
+class HistoryRouteTests(ServerTestBase):
+    """The /api/history and /api/history/dates routes, end to end over HTTP."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.archive = ResultsArchive(root=Path(self.tmp.name))
+        self.archive.save_scores(
+            [{"date": "2026-05-29", "away": "Atlanta Braves",
+              "home": "Cincinnati Reds", "away_score": 8, "home_score": 3,
+              "winner": "Atlanta Braves"}],
+            datetime(2026, 5, 29))
+
+    def test_history_dates_lists_archived_days(self):
+        base = self.make(archive=self.archive)
+        _, ctype, body = self.get(base + "/api/history/dates")
+        self.assertIn("application/json", ctype)
+        self.assertEqual(json.loads(body)["dates"], ["2026-05-29"])
+
+    def test_history_serves_payload_for_date(self):
+        base = self.make(archive=self.archive)
+        _, _, body = self.get(base + "/api/history?date=2026-05-29")
+        payload = json.loads(body)
+        self.assertEqual(payload["mode"], "history")
+        self.assertEqual(payload["date"], "2026-05-29")
+        self.assertEqual(len(payload["games"]), 1)
+
+    def test_history_missing_day_reports_error(self):
+        base = self.make(archive=self.archive)
+        _, _, body = self.get(base + "/api/history?date=2000-01-01")
+        self.assertIn("No archived data", json.loads(body)["error"])
+
+    def test_history_dates_excludes_today(self):
+        # The archive holds 05-29; with "today" pinned to 05-29 it must not
+        # appear (today is the live view, not a history entry).
+        base = self.make(archive=self.archive, date_fn=lambda: "2026-05-29")
+        _, _, body = self.get(base + "/api/history/dates")
+        self.assertEqual(json.loads(body)["dates"], [])
+
+    def test_matchup_returns_single_game_from_history(self):
+        base = self.make(archive=self.archive, date_fn=lambda: "2026-06-02")
+        url = (base + "/api/matchup?date=2026-05-29"
+               "&away=Atlanta+Braves&home=Cincinnati+Reds")
+        payload = json.loads(self.get(url)[2])
+        self.assertTrue(payload["found"])
+        self.assertEqual(payload["mode"], "history")
+        self.assertEqual(payload["game"]["away"], "Atlanta Braves")
+        self.assertEqual(payload["game"]["awayScore"], 8)
+
+    def test_matchup_not_found_flags_missing(self):
+        base = self.make(archive=self.archive, date_fn=lambda: "2026-06-02")
+        url = base + "/api/matchup?date=2026-05-29&away=Nope&home=Nada"
+        payload = json.loads(self.get(url)[2])
+        self.assertFalse(payload["found"])
+        self.assertIsNone(payload["game"])
 
 
 class CacheTests(ServerTestBase):

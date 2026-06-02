@@ -7,9 +7,11 @@ incorrect/pending) logic and field passthrough are pinned deterministically.
 
 import tempfile
 import unittest
+from datetime import datetime
 from pathlib import Path
 
 from mlb import live
+from mlb.results_archive import ResultsArchive
 
 
 SAMPLE_PREDICTIONS = """\
@@ -184,6 +186,99 @@ class BuildPayloadTests(unittest.TestCase):
         payload = live.build_live_payload(
             FakeApi([]), Path(self.tmp.name) / "nope.txt", "2026-05-31",
             self.stats_dir)
+        self.assertEqual(payload["games"], [])
+
+
+class BuildHistoryPayloadTests(unittest.TestCase):
+    """build_history_payload merges archived scores + a predictions snapshot."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.archive = ResultsArchive(root=Path(self.tmp.name))
+        self.date = datetime(2026, 5, 31)
+        # Two completed games matching SAMPLE_PREDICTIONS' matchups: the first
+        # favorite (Toronto) wins, the second favorite (Washington) loses.
+        self.rows = [
+            {"date": "2026-05-31", "away": "Toronto Blue Jays",
+             "home": "Baltimore Orioles", "away_score": 6, "home_score": 2,
+             "winner": "Toronto Blue Jays", "home_sp": "Kyle Bradish",
+             "away_sp": "Spencer Miles"},
+            {"date": "2026-05-31", "away": "San Diego Padres",
+             "home": "Washington Nationals", "away_score": 5, "home_score": 1,
+             "winner": "San Diego Padres", "home_sp": "Zack Littell",
+             "away_sp": "Griffin Canning"},
+        ]
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def _snapshot_predictions(self):
+        preds = Path(self.tmp.name) / "predictions.txt"
+        preds.write_text(SAMPLE_PREDICTIONS, encoding="utf-8")
+        self.archive.snapshot(self.date, preds)
+
+    def build(self):
+        return live.build_history_payload("2026-05-31", self.archive)
+
+    def test_grades_predictions_against_results(self):
+        self.archive.save_scores(self.rows, self.date)
+        self._snapshot_predictions()
+        payload = self.build()
+
+        self.assertEqual(payload["mode"], "history")
+        self.assertTrue(payload["hasPredictions"])
+        self.assertIsNone(payload["error"])
+        self.assertEqual(len(payload["games"]), 2)
+
+        g0, g1 = payload["games"]
+        self.assertEqual(g0["border"], "correct")
+        self.assertEqual(g0["state"], "final")
+        self.assertEqual(g0["awayScore"], 6)      # parsed from the CSV string
+        self.assertEqual(g0["awayP"], 63.1)
+        self.assertEqual(g0["awaySp"], "Spencer Miles")
+        self.assertEqual(g1["border"], "incorrect")
+
+        s = payload["summary"]
+        self.assertEqual((s["games"], s["correct"], s["incorrect"]), (2, 1, 1))
+        self.assertEqual(s["accuracy"], 50.0)
+        self.assertAlmostEqual(s["brier"], 0.3027, places=4)
+
+    def test_results_only_day_renders_without_grading(self):
+        self.archive.save_scores(self.rows, self.date)  # no predictions snapshot
+        payload = self.build()
+        self.assertFalse(payload["hasPredictions"])
+        self.assertIsNone(payload["summary"])
+        self.assertIsNone(payload["error"])
+        g0 = payload["games"][0]
+        self.assertIsNone(g0["favorite"])
+        self.assertIsNone(g0["awayP"])
+        self.assertEqual(g0["border"], "pending")
+        self.assertEqual(g0["homeScore"], 2)
+
+    def test_predictions_only_day_renders_pending(self):
+        # Predictions saved but no results archived yet (e.g. yesterday): the
+        # matchups show, ungraded, with no summary.
+        self._snapshot_predictions()
+        payload = self.build()
+        self.assertTrue(payload["hasPredictions"])
+        self.assertFalse(payload["hasResults"])
+        self.assertIsNone(payload["error"])
+        self.assertIsNone(payload["summary"])
+        self.assertEqual(len(payload["games"]), 2)
+        g0 = payload["games"][0]
+        self.assertEqual(g0["border"], "pending")
+        self.assertEqual(g0["state"], "preview")
+        self.assertEqual(g0["awayP"], 63.1)        # prediction still shown
+        self.assertIsNone(g0["awayScore"])
+
+    def test_empty_day_reports_error(self):
+        payload = self.build()
+        self.assertEqual(payload["games"], [])
+        self.assertIn("No archived data", payload["error"])
+
+    def test_invalid_date_reports_error(self):
+        payload = live.build_history_payload("not-a-date", self.archive)
+        self.assertIn("Invalid date", payload["error"])
         self.assertEqual(payload["games"], [])
 
 

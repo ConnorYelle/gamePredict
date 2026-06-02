@@ -55,6 +55,41 @@ class ResultsArchive:
         with path.open(encoding="utf-8") as f:
             return list(csv.DictReader(f))
 
+    def load_predictions_text(self, date):
+        """Return the predictions.txt snapshot saved for ``date``, or None.
+
+        Only days archived after the snapshotting pipeline step ran will have
+        one; older days hold final scores only, so the caller must tolerate
+        None (the matchup can still be shown, just not graded)."""
+        path = self.day_dir(date) / "predictions.txt"
+        if not path.exists():
+            return None
+        return path.read_text(encoding="utf-8")
+
+    def available_dates(self):
+        """Return ascending ``YYYY-MM-DD`` strings for every reviewable archived
+        day. Powers the dashboard's day picker.
+
+        A day counts as reviewable if it has *either* final scores or a saved
+        predictions snapshot -- the latter so a just-played day (e.g. yesterday,
+        whose results haven't been archived yet) still shows up; the history
+        view fetches its finals on demand. Folder names are ``MM-DD-YY``; we
+        parse them to real dates so the sort is chronological (correct across
+        year boundaries) rather than lexical, then re-emit in ISO form."""
+        if not self.base_dir.is_dir():
+            return []
+        dates = []
+        for d in self.base_dir.iterdir():
+            if not ((d / "final_scores.csv").exists()
+                    or (d / "predictions.txt").exists()):
+                continue
+            try:
+                parsed = datetime.strptime(d.name, DATE_FMT)
+            except ValueError:
+                continue  # ignore stray folders that aren't a dated archive
+            dates.append(parsed)
+        return [d.strftime("%Y-%m-%d") for d in sorted(dates)]
+
     def snapshot(self, date, *files):
         """Copy the given files (e.g. games.txt, predictions.txt) into the day
         folder so a prediction/result pair survives the next pipeline run."""

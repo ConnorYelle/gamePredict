@@ -75,6 +75,37 @@ class ResultsArchiveTests(unittest.TestCase):
         self.assertTrue((out_dir / "predictions.txt").exists())
         self.assertFalse((out_dir / "nope.txt").exists())
 
+    def test_load_predictions_text_round_trip(self):
+        src = Path(self.tmp.name) / "predictions.txt"
+        src.write_text("Toronto Blue Jays 63.1%", encoding="utf-8")
+        self.archive.snapshot(self.date, src)
+        self.assertIn("63.1%", self.archive.load_predictions_text(self.date))
+
+    def test_load_predictions_text_missing_returns_none(self):
+        self.assertIsNone(self.archive.load_predictions_text(self.date))
+
+    def test_available_dates_lists_days_chronologically(self):
+        # Save out of order; available_dates returns ascending ISO strings.
+        self.archive.save_scores(ROWS, datetime(2026, 5, 29))
+        self.archive.save_scores(ROWS, datetime(2026, 4, 30))
+        # A predictions-only day (results not archived yet) is still listed, so
+        # a just-played day shows up in the picker.
+        snap_only = Path(self.tmp.name) / "predictions.txt"
+        snap_only.write_text("x", encoding="utf-8")
+        self.archive.snapshot(datetime(2026, 6, 1), snap_only)
+        self.assertEqual(self.archive.available_dates(),
+                         ["2026-04-30", "2026-05-29", "2026-06-01"])
+
+    def test_available_dates_ignores_folders_without_data(self):
+        # A dated folder with neither scores nor predictions is not reviewable.
+        (self.archive.base_dir / "07-04-26").mkdir(parents=True)
+        self.archive.save_scores(ROWS, datetime(2026, 5, 29))
+        self.assertEqual(self.archive.available_dates(), ["2026-05-29"])
+
+    def test_available_dates_empty_when_no_archive(self):
+        empty = ra.ResultsArchive(root=Path(self.tmp.name) / "elsewhere")
+        self.assertEqual(empty.available_dates(), [])
+
 
 class FakeApi:
     def __init__(self, rows):
